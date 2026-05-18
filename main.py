@@ -43,7 +43,8 @@ async def is_subscribed(client, user_id):
 def extract_tiktok_data(url: str) -> dict:
     clean_url = url.split("?")[0] if "?" in url else url
     api_url = "https://www.tikwm.com/api/"
-    data = {"url": clean_url, "count": 12, "cursor": 0, "web": 1, "hd": 1}
+    # شلنا الـ count حتى نسحب كل الصور مهما كان عددها
+    data = {"url": clean_url, "hd": 1}
     
     def fix_url(link):
         if link and link.startswith("/"): return "https://www.tikwm.com" + link
@@ -57,7 +58,7 @@ def extract_tiktok_data(url: str) -> dict:
             if result.get("code") == 0:
                 body = result.get("data")
                 if "images" in body:
-                    return {"type": "images", "images": [fix_url(i) for i in body["images"]], "audio": fix_url(body.get("music"))}
+                    return {"type": "images", "images": [fix_url(i) for i in body["images"]], "audio": fix_url(body.get("music")), "title": body.get("title")}
                 else:
                     return {"type": "video", "video_url": fix_url(body.get("play")), "title": body.get("title")}
     except Exception as e:
@@ -65,24 +66,15 @@ def extract_tiktok_data(url: str) -> dict:
     return None
 
 def extract_snapinsta(url: str) -> tuple:
-    """
-    سحب إنستجرام حصرياً من موقع SnapInsta.to بناءً على تحليل الـ DevTools
-    """
+    # دالة الإنستا بقت مثل ما هي بدون تغيير للمستقبل
     clean_url = url.split("?")[0]
     media_urls = []
     debug_logs = []
-    
-    # تهيئة كاسر الحماية
-    scraper = cloudscraper.create_scraper(
-        browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
-    )
+    scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
     
     try:
-        # الخطوة 1: زيارة الصفحة الرئيسية لأخذ ملفات الارتباط (Cookies) وتخطي كلاود فلاير
         main_url = "https://snapinsta.to/en2"
         scraper.get(main_url, timeout=10)
-        
-        # الخطوة 2: ضرب الـ API بالبيانات المستخرجة من الصورة
         api_url = "https://snapinsta.to/api/ajaxSearch"
         headers = {
             "Origin": "https://snapinsta.to",
@@ -91,23 +83,13 @@ def extract_snapinsta(url: str) -> tuple:
             "Accept": "application/json, text/javascript, */*; q=0.01",
             "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
         }
-        
-        payload = {
-            "q": clean_url,
-            "t": "media",
-            "v": "v2",
-            "lang": "en"
-            # تعمدنا إخفاء cftoken حتى يقوم السيرفر بتخطيها إذا كانت الكوكيز سليمة
-        }
-        
+        payload = {"q": clean_url, "t": "media", "v": "v2", "lang": "en"}
         resp = scraper.post(api_url, data=payload, headers=headers, timeout=15)
         
         if resp.status_code == 200:
             res_json = resp.json()
             html_content = res_json.get("data", "")
-            
             if html_content:
-                # الكود يرجع HTML، نستخدم BeautifulSoup حتى نسحب الروابط
                 soup = BeautifulSoup(html_content, "html.parser")
                 for item in soup.find_all("div", class_="download-items"):
                     btn = item.find("a", href=True)
@@ -115,55 +97,29 @@ def extract_snapinsta(url: str) -> tuple:
                         link = btn['href']
                         t = "photo" if any(ext in link.lower() for ext in [".jpg", ".jpeg", ".webp"]) else "video"
                         media_urls.append({"type": t, "url": link})
-                
-                if media_urls:
-                    return media_urls, debug_logs
-                else:
-                    debug_logs.append("SnapInsta: تم الاتصال، لكن لم نعثر على زر التحميل في الـ HTML.")
-            else:
-                debug_logs.append(f"SnapInsta: استجابة فارغة (ربما توكن CF مطلوب). النص: {resp.text[:50]}")
-        else:
-            debug_logs.append(f"SnapInsta: HTTP {resp.status_code} - {resp.text[:50]}")
-            
-    except Exception as e:
-        debug_logs.append(f"SnapInsta Error: {str(e)}")
+                if media_urls: return media_urls, debug_logs
+                else: debug_logs.append("SnapInsta: تم الاتصال، لكن لم نعثر على زر التحميل في الـ HTML.")
+            else: debug_logs.append(f"SnapInsta: استجابة فارغة. النص: {resp.text[:50]}")
+        else: debug_logs.append(f"SnapInsta: HTTP {resp.status_code} - {resp.text[:50]}")
+    except Exception as e: debug_logs.append(f"SnapInsta Error: {str(e)}")
 
-    # ============================================================
-    # خطة بديلة (B): استخدام موقع SnapInsta.app (النسخة الأخرى) 
-    # في حال فشل النسخة .to بسبب الـ cftoken
-    # ============================================================
     if not media_urls:
         try:
             api_url_2 = "https://snapinsta.app/action2.php"
-            headers_2 = {
-                "Origin": "https://snapinsta.app",
-                "Referer": "https://snapinsta.app/",
-                "X-Requested-With": "XMLHttpRequest"
-            }
-            payload_2 = {
-                "url": clean_url,
-                "action": "post"
-            }
-            
+            headers_2 = {"Origin": "https://snapinsta.app", "Referer": "https://snapinsta.app/", "X-Requested-With": "XMLHttpRequest"}
+            payload_2 = {"url": clean_url, "action": "post"}
             resp_2 = scraper.post(api_url_2, data=payload_2, headers=headers_2, timeout=15)
             if resp_2.status_code == 200:
-                # الموقع يرجع HTML مباشرة بدون JSON
                 soup = BeautifulSoup(resp_2.text, "html.parser")
                 for a in soup.find_all("a", href=True):
                     link = a["href"]
-                    # نبحث عن زر التحميل
                     if link.startswith("http") and ("download" in str(a).lower() or "btn" in str(a.get("class"))):
                         t = "photo" if any(ext in link.lower() for ext in [".jpg", ".jpeg", ".webp"]) else "video"
                         media_urls.append({"type": t, "url": link})
-                        
-                if media_urls:
-                    return media_urls, debug_logs
-                else:
-                    debug_logs.append("SnapInsta.app: لم يتم العثور على أزرار.")
-            else:
-                debug_logs.append(f"SnapInsta.app: HTTP {resp_2.status_code}")
-        except Exception as e:
-            debug_logs.append(f"SnapInsta.app Error: {str(e)}")
+                if media_urls: return media_urls, debug_logs
+                else: debug_logs.append("SnapInsta.app: لم يتم العثور على أزرار.")
+            else: debug_logs.append(f"SnapInsta.app: HTTP {resp_2.status_code}")
+        except Exception as e: debug_logs.append(f"SnapInsta.app Error: {str(e)}")
 
     return media_urls, debug_logs
 
@@ -243,21 +199,46 @@ async def media_downloader_router(client, message):
         return
 
     url = message.text.strip()
-    processing_msg = await message.reply("⏳ **جاري الاستخراج من SnapInsta...**", quote=True)
+    processing_msg = await message.reply("⏳ **جاري التحميل...**", quote=True)
     
     try:
+        # ==========================================
+        # قسم التيك توك (تمت إضافة التقطيع للصور)
+        # ==========================================
         if "tiktok.com" in url:
             data = await asyncio.to_thread(extract_tiktok_data, url)
             if not data: return await processing_msg.edit("❌ فشل استخراج بيانات تيك توك.")
             
+            # إذا كان فيديو عادي
             if data["type"] == "video":
-                await client.send_video(message.chat.id, video=data["video_url"], caption="🤖 بواسطة البوت", reply_to_message_id=message.id)
+                caption_text = f"📝 {data.get('title', '')}\n\n🤖 بواسطة البوت" if data.get('title') else "🤖 بواسطة البوت"
+                await client.send_video(message.chat.id, video=data["video_url"], caption=caption_text, reply_to_message_id=message.id)
+            
+            # إذا كان منشور صور (تقسيم الصور إلى دفعات)
             elif data["type"] == "images":
-                media_group = [InputMediaPhoto(img) for img in data["images"]]
-                await client.send_media_group(message.chat.id, media=media_group, reply_to_message_id=message.id)
-                if data.get("audio"): await client.send_audio(message.chat.id, audio=data["audio"])
+                images = data["images"]
+                
+                # 1. إرسال الصور بدفعات (كل 10 صور برسالة لتجنب قوانين تيليجرام)
+                for i in range(0, len(images), 10):
+                    chunk = images[i:i + 10]
+                    media_group = [InputMediaPhoto(img) for img in chunk]
+                    await client.send_media_group(message.chat.id, media=media_group, reply_to_message_id=message.id)
+                    await asyncio.sleep(1.5) # استراحة ثانية ونص حتى تيليجرام ما يحظر البوت من السرعة
+                
+                # 2. إرسال العنوان بعد الصور
+                title = data.get("title")
+                if title:
+                    await client.send_message(message.chat.id, text=f"📝 **العنوان:**\n{title}\n\n🤖 بواسطة البوت", reply_to_message_id=message.id)
+                
+                # 3. إرسال الموسيقى بالأخير
+                if data.get("audio"): 
+                    await client.send_audio(message.chat.id, audio=data["audio"], reply_to_message_id=message.id)
+                    
             await processing_msg.delete()
 
+        # ==========================================
+        # قسم الإنستجرام 
+        # ==========================================
         elif "instagram.com" in url:
             media_list, debug_logs = await asyncio.to_thread(extract_snapinsta, url)
             
@@ -289,6 +270,6 @@ async def media_downloader_router(client, message):
             await processing_msg.edit(f"⚠️ حدث خطأ تقني: `{str(e)}`")
 
 if __name__ == "__main__":
-    print("🤖 Bot is running targeting SnapInsta...", flush=True)
+    print("🤖 Bot is running...", flush=True)
     app.run()
-                
+    
