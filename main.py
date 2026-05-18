@@ -136,27 +136,28 @@ def extract_twitter_data(url: str) -> list:
     return []
 
 # ==========================================
-# 5. محرك الصوتيات (تخطي حماية سبوتيفاي الذكي 🚀)
+# 5. محرك الصوتيات (تم إصلاح الصيغة لتعمل على تيليجرام 🎧)
 # ==========================================
 def download_audio_track(url: str) -> dict:
     scraper = cloudscraper.create_scraper()
     
-    # 🎧 التكتيك الذكي لسبوتيفاي (جلب الاسم والتحميل من يوتيوب)
+    # 🎧 سبوتيفاي: استخراج بصيغة m4a المدعومة رسمياً في تيليجرام
     if "spotify.com" in url:
         try:
             oembed_url = f"https://open.spotify.com/oembed?url={url}"
             resp = scraper.get(oembed_url, timeout=10)
             if resp.status_code == 200:
-                track_title = resp.json().get("title") # اسم الأغنية والفنان
+                track_title = resp.json().get("title")
                 if track_title:
+                    # 🚀 التعديل هنا: إجبار المكتبة على صيغة m4a حتى تشتغل بالتيليجرام مباشرة
                     ydl_opts = {
                         'outtmpl': f"audio_{uuid.uuid4().hex[:6]}.%(ext)s", 
                         'quiet': True, 'no_warnings': True,
-                        'format': 'bestaudio/best', 'noplaylist': True,
+                        'format': 'bestaudio[ext=m4a]/m4a/bestaudio/best', 
+                        'noplaylist': True,
                         'max_filesize': 30 * 1024 * 1024
                     }
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        # البحث في يوتيوب وتحميل أول نتيجة كملف صوتي
                         info = ydl.extract_info(f"ytsearch1:{track_title} audio", download=True)
                         if 'entries' in info and info['entries']:
                             entry = info['entries'][0]
@@ -167,7 +168,7 @@ def download_audio_track(url: str) -> dict:
             print(f"Spotify Bypass Error: {e}", flush=True)
         return None
 
-    # 🎧 ساوند كلاود وباقي المنصات الصوتية (تعمل بشكل ممتاز)
+    # 🎧 ساوند كلاود وباقي المنصات الصوتية
     filename = f"audio_{uuid.uuid4().hex[:6]}.mp3"
     instances = ["https://co.wuk.sh/api/json", "https://cobalt.cst.im/api/json", "https://api.cobalt.biz.ua/api/json"]
     for inst in instances:
@@ -183,7 +184,13 @@ def download_audio_track(url: str) -> dict:
                     return {"path": filename, "title": res.get("text", "Audio Track 🎵")}
         except Exception: continue
             
-    ydl_opts = {'outtmpl': filename, 'quiet': True, 'no_warnings': True, 'format': 'bestaudio/best'}
+    # خطة بديلة للساوند كلاود باستخدام m4a
+    ydl_opts = {
+        'outtmpl': f"audio_{uuid.uuid4().hex[:6]}.%(ext)s", 
+        'quiet': True, 'no_warnings': True, 
+        'format': 'bestaudio[ext=m4a]/m4a/bestaudio/best',
+        'max_filesize': 30 * 1024 * 1024
+    }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -395,7 +402,7 @@ async def media_downloader_router(client, message):
 
         # ==========================================
         # قسم بنترست 
-        # ==============================
+        # ==========================================
         elif "pinterest.com" in url or "pin.it" in url:
             data = await asyncio.to_thread(extract_pinterest_data, url)
             if not data: return await processing_msg.edit("❌ فشل استخراج بيانات بنترست.")
@@ -424,5 +431,5 @@ async def media_downloader_router(client, message):
     except Exception as e: await processing_msg.edit(f"⚠️ خطأ تقني: `{str(e)}`")
 
 if __name__ == "__main__":
-    print("🤖 Bot is running with Smart Spotify Bypass...", flush=True)
+    print("🤖 Bot is running with M4A audio support for Telegram...", flush=True)
     app.run()
