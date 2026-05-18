@@ -98,18 +98,16 @@ def extract_pinterest_data(url: str) -> dict:
     return None
 
 # ==========================================
-# 3. محرك يوتيوب وتويتر (تحميل محلي ذكي) 🚀
+# 3. محرك يوتيوب (يستخدم yt-dlp محلياً)
 # ==========================================
-def download_yt_twitter(url: str) -> dict:
-    """يقوم بتحميل الفيديو مؤقتاً لتجاوز حظر الـ IP الخاص بيوتيوب وتويتر"""
-    # توليد اسم عشوائي للفيديو حتى لا تتداخل الملفات
+def download_youtube_video(url: str) -> dict:
     filename = f"temp_{uuid.uuid4().hex[:6]}.mp4"
     ydl_opts = {
         'outtmpl': filename,
         'quiet': True,
         'no_warnings': True,
-        'format': 'b[ext=mp4]/best', # اختيار أفضل جودة بصيغة mp4
-        'max_filesize': 50 * 1024 * 1024, # الحد الأقصى 50 ميجا (لحماية السيرفر وتيليجرام)
+        'format': 'b[ext=mp4]/best', 
+        'max_filesize': 50 * 1024 * 1024, 
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -117,13 +115,38 @@ def download_yt_twitter(url: str) -> dict:
             if os.path.exists(filename):
                 return {"path": filename, "title": info.get("title", "")}
     except Exception as e:
-        print(f"yt-dlp Error: {e}", flush=True)
-        if os.path.exists(filename):
-            os.remove(filename) # مسح الملف إذا حدث خطأ
+        if os.path.exists(filename): os.remove(filename)
     return None
 
 # ==========================================
-# 4. محرك استخراج إنستجرام (المخفي كطوارئ)
+# 4. محرك تويتر / X (يدعم الصور المتعددة والفيديو) 🚀
+# ==========================================
+def extract_twitter_data(url: str) -> list:
+    # تحويل الرابط إلى API مخصص لتويتر
+    match = re.search(r'(?:twitter\.com|x\.com)/([^/]+/status/\d+)', url)
+    if not match: return []
+    
+    api_url = f"https://api.vxtwitter.com/{match.group(1)}"
+    scraper = cloudscraper.create_scraper()
+    
+    try:
+        resp = scraper.get(api_url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            media_list = []
+            # سحب الوسائط المتعددة بدقة عالية
+            for m in data.get("media_extended", []):
+                if m["type"] == "image":
+                    media_list.append({"type": "photo", "url": m["url"]})
+                elif m["type"] in ["video", "gif"]:
+                    media_list.append({"type": "video", "url": m["url"]})
+            return media_list
+    except Exception as e:
+        print(f"Twitter Error: {e}", flush=True)
+    return []
+
+# ==========================================
+# 5. محرك استخراج إنستجرام (المخفي كطوارئ)
 # ==========================================
 def extract_snapinsta(url: str) -> tuple:
     clean_url = url.split("?")[0]
@@ -231,7 +254,7 @@ async def change_force_channel(client, callback):
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
     user_id = message.from_user.id
-    if user_id in db.get("banned_users"): return # تجاهل المحظورين
+    if user_id in db.get("banned_users"): return
     
     users = db.get("users")
     if user_id not in users:
@@ -278,26 +301,42 @@ async def media_downloader_router(client, message):
     
     try:
         # ==========================================
-        # قسم يوتيوب (Shorts) و تويتر (X) 🚀
+        # قسم تويتر (X) 🐦
         # ==========================================
-        if any(domain in url for domain in ["youtube.com", "youtu.be", "twitter.com", "x.com"]):
-            data = await asyncio.to_thread(download_yt_twitter, url)
+        if "twitter.com" in url or "x.com" in url:
+            media_list = await asyncio.to_thread(extract_twitter_data, url)
+            if not media_list: 
+                return await processing_msg.edit("❌ فشل التحميل. تأكد أن التغريدة تحتوي على صور أو فيديو، وليست من حساب خاص.")
+            
+            if len(media_list) == 1:
+                media = media_list[0]
+                if media["type"] == "video": await client.send_video(message.chat.id, video=media["url"], caption="🤖 بواسطة البوت", reply_to_message_id=message.id)
+                else: await client.send_photo(message.chat.id, photo=media["url"], caption="🤖 بواسطة البوت", reply_to_message_id=message.id)
+            elif len(media_list) > 1:
+                media_group = []
+                for m in media_list[:4]: # تويتر يسمح بـ 4 صور كحد أقصى
+                    if m["type"] == "video": media_group.append(InputMediaVideo(m["url"]))
+                    else: media_group.append(InputMediaPhoto(m["url"]))
+                await client.send_media_group(message.chat.id, media=media_group, reply_to_message_id=message.id)
+            await processing_msg.delete()
+
+        # ==========================================
+        # قسم يوتيوب (Shorts) 📺
+        # ==========================================
+        elif "youtube.com" in url or "youtu.be" in url:
+            data = await asyncio.to_thread(download_youtube_video, url)
             if not data: 
                 return await processing_msg.edit("❌ فشل التحميل. الرابط معطوب أو حجم الفيديو يتجاوز 50 ميجابايت.")
             
             caption = f"📝 {data['title']}\n\n🤖 بواسطة البوت" if data['title'] else "🤖 بواسطة البوت"
             try:
-                # نرفع الملف المحمل محلياً لتيليجرام
                 await client.send_video(message.chat.id, video=data['path'], caption=caption, reply_to_message_id=message.id)
             finally:
-                # 🔴 خطوة مهمة جداً: حذف الملف من السيرفر فوراً حتى لا يمتلئ
-                if os.path.exists(data['path']):
-                    os.remove(data['path'])
-            
+                if os.path.exists(data['path']): os.remove(data['path']) # مسح الملف بعد الإرسال
             await processing_msg.delete()
 
         # ==========================================
-        # قسم التيك توك
+        # قسم التيك توك 🎵
         # ==========================================
         elif "tiktok.com" in url:
             data = await asyncio.to_thread(extract_tiktok_data, url)
@@ -319,7 +358,7 @@ async def media_downloader_router(client, message):
             await processing_msg.delete()
 
         # ==========================================
-        # قسم بنترست
+        # قسم بنترست 📌
         # ==========================================
         elif "pinterest.com" in url or "pin.it" in url:
             data = await asyncio.to_thread(extract_pinterest_data, url)
@@ -330,7 +369,7 @@ async def media_downloader_router(client, message):
             await processing_msg.delete()
 
         # ==========================================
-        # قسم إنستجرام
+        # قسم إنستجرام 📸
         # ==========================================
         elif "instagram.com" in url:
             media_list, debug = await asyncio.to_thread(extract_snapinsta, url)
@@ -358,6 +397,6 @@ async def media_downloader_router(client, message):
             await processing_msg.edit(f"⚠️ حدث خطأ تقني: `{str(e)}`")
 
 if __name__ == "__main__":
-    print("🤖 Bot is running with Local YT-DLP engine...", flush=True)
+    print("🤖 Bot is running with Separate Twitter & YT Engines...", flush=True)
     app.run()
-                        
+    
