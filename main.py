@@ -403,4 +403,20 @@ async def media_downloader_router(client, message):
             elif len(media_list) > 1:
                 media_group = []
                 for m in media_list[:10]:
-                    if m["type"] == "video": media_group.append(InputM
+                    if m["type"] == "video": media_group.append(InputMediaVideo(m["url"]))
+                    else: media_group.append(InputMediaPhoto(m["url"]))
+                await client.send_media_group(message.chat.id, media=media_group, reply_to_message_id=message.id)
+            await processing_msg.delete()
+
+        else:
+            await processing_msg.edit("❌ هذا الرابط غير مدعوم حالياً.")
+
+    except Exception as e:
+        if "WebpageCurlFailed" in str(e):
+            await processing_msg.edit("⚠️ تم جلب الرابط، لكن تيليجرام رفض رفعه لحجمه. جرب رابطاً آخر.")
+        else:
+            await processing_msg.edit(f"⚠️ حدث خطأ تقني: `{str(e)}`")
+
+if __name__ == "__main__":
+    print("🤖 Bot is running with Dynamic Welcome Settings...", flush=True)
+    app.run()
