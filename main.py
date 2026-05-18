@@ -1,7 +1,6 @@
 import asyncio
-import urllib.parse
 import aiohttp
-import socket
+import yt_dlp
 from pyrogram import filters, enums
 from pyromod import Client
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, InputMediaVideo
@@ -51,9 +50,7 @@ async def fetch_tiktok_data(url: str) -> dict:
         return link
 
     try:
-        # إجبار الاتصال عبر IPv4 لتجنب مشاكل Railway
-        connector = aiohttp.TCPConnector(family=socket.AF_INET, ssl=False)
-        async with aiohttp.ClientSession(connector=connector) as session:
+        async with aiohttp.ClientSession() as session:
             async with session.post(api_url, data=data, timeout=15) as response:
                 if response.status == 200:
                     result = await response.json()
@@ -67,71 +64,45 @@ async def fetch_tiktok_data(url: str) -> dict:
         print(f"TikTok API Error: {e}", flush=True)
     return None
 
-async def fetch_instagram_data(url: str) -> tuple:
+
+# 🚀 دالة إنستجرام الجديدة باستخدام yt-dlp للاعتماد على الذات 100%
+def extract_instagram_ytdlp(url: str) -> tuple:
     clean_url = url.split("?")[0]
-    if not clean_url.endswith("/"):
-        clean_url += "/"
-        
     media_urls = []
     debug_logs = []
     
-    # دمج سيرفرات مستقرة
-    apis = [
-        {"url": "https://co.wuk.sh/api/json", "type": "cobalt"},
-        {"url": "https://cobalt.cst.im/api/json", "type": "cobalt"},
-        {"url": "https://api.cobalt.biz.ua/api/json", "type": "cobalt"},
-        {"url": f"https://api.siputzx.my.id/api/d/igdl?url={urllib.parse.quote(clean_url)}", "type": "rest"},
-        {"url": f"https://nayan-video-downloader.vercel.app/nayan/igdl?url={urllib.parse.quote(clean_url)}", "type": "rest"}
-    ]
-    
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True, # لا نحمل الملف للسيرفر، نستخرج الرابط فقط
+        'extract_flat': False
     }
-
-    # 🔥 السحر هنا: إجبار الخادم على استخدام IPv4 وتجاهل شهادات SSL
-    connector = aiohttp.TCPConnector(family=socket.AF_INET, ssl=False)
     
-    async with aiohttp.ClientSession(connector=connector) as session:
-        for api in apis:
-            name = api["url"].split("//")[1].split("/")[0]
-            try:
-                if api["type"] == "cobalt":
-                    async with session.post(api["url"], json={"url": clean_url}, headers=headers, timeout=12) as resp:
-                        if resp.status == 200:
-                            res = await resp.json()
-                            if res.get("status") in ["stream", "redirect"]:
-                                link = res.get("url")
-                                t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
-                                return [{"type": t, "url": link}], debug_logs
-                            elif res.get("status") == "picker":
-                                for item in res.get("picker", []):
-                                    link = item.get("url")
-                                    t = "photo" if item.get("type") == "photo" else "video"
-                                    media_urls.append({"type": t, "url": link})
-                                if media_urls: return media_urls, debug_logs
-                        else:
-                            debug_logs.append(f"{name}: HTTP {resp.status}")
-                
-                elif api["type"] == "rest":
-                    async with session.get(api["url"], headers=headers, timeout=12) as resp:
-                        if resp.status == 200:
-                            res = await resp.json()
-                            data = res.get("data") or res.get("result")
-                            if data and isinstance(data, list):
-                                for item in data:
-                                    link = item.get("url") if isinstance(item, dict) else item
-                                    if link and isinstance(link, str) and link.startswith("http"):
-                                        t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
-                                        media_urls.append({"type": t, "url": link})
-                                if media_urls: return media_urls, debug_logs
-                        else:
-                            debug_logs.append(f"{name}: HTTP {resp.status}")
-            except Exception as e:
-                debug_logs.append(f"{name} Error: {str(e)}")
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(clean_url, download=False)
+            
+            # إذا كان المنشور عبارة عن "ألبوم" (عدة صور أو فيديوهات)
+            if 'entries' in info:
+                for entry in info['entries']:
+                    link = entry.get('url')
+                    if link:
+                        ext = entry.get('ext', '')
+                        t = "photo" if ext in ['jpg', 'webp', 'png'] or '.jpg' in link.lower() else "video"
+                        media_urls.append({"type": t, "url": link})
+            # إذا كان المنشور مفرداً (ريلز واحد أو صورة واحدة)
+            else:
+                link = info.get('url')
+                if link:
+                    ext = info.get('ext', '')
+                    t = "photo" if ext in ['jpg', 'webp', 'png'] or '.jpg' in link.lower() else "video"
+                    media_urls.append({"type": t, "url": link})
+                    
+    except Exception as e:
+        debug_logs.append(f"yt-dlp Error: {str(e)}")
+        
+    return media_urls, debug_logs
 
-    return [], debug_logs
 
 # ------------------------------------------------------------------------
 # معالجات الأوامر واللوحة
@@ -216,7 +187,7 @@ async def media_downloader_router(client, message):
         return
 
     url = message.text.strip()
-    processing_msg = await message.reply("⏳ **جاري التحميل...**", quote=True)
+    processing_msg = await message.reply("⏳ **جاري المعالجة والتحميل...**", quote=True)
     
     try:
         if "tiktok.com" in url:
@@ -232,7 +203,8 @@ async def media_downloader_router(client, message):
             await processing_msg.delete()
 
         elif "instagram.com" in url:
-            media_list, debug_logs = await fetch_instagram_data(url)
+            # تشغيل الدالة في مسار خلفي (Thread) حتى لا تتجمد بقية مهام البوت
+            media_list, debug_logs = await asyncio.to_thread(extract_instagram_ytdlp, url)
             
             if not media_list:
                 error_text = "❌ **فشل استخراج البيانات.**\n"
@@ -257,7 +229,7 @@ async def media_downloader_router(client, message):
 
     except Exception as e:
         if "WebpageCurlFailed" in str(e):
-            await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن تيليجرام رفض رفعه لكونه كبيراً أو محمياً. جرب رابطاً آخر.")
+            await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن تيليجرام رفض رفعه (بسبب حجمه الكبير أو حماية IP). جرب رابطاً آخر.")
         else:
             await processing_msg.edit(f"⚠️ حدث خطأ تقني: `{str(e)}`")
 
