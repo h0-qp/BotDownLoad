@@ -24,7 +24,7 @@ if not db.exists("force_channel"):
     db.set("force_channel", "None")
 
 # ------------------------------------------------------------------------
-# دوال المساعدة والمحركات الأساسية (خطة الـ APIs المخصصة للبوتات)
+# دوال المساعدة والمحركات الأساسية (نظام السيرفرات العالمية المستقرة)
 # ------------------------------------------------------------------------
 
 async def is_subscribed(client, user_id):
@@ -65,7 +65,7 @@ def extract_tiktok_requests(url: str) -> dict:
 
 def extract_instagram_bot_apis(url: str) -> tuple:
     """
-    استخراج إنستجرام عبر 4 سيرفرات APIs مخصصة للبوتات (خلفية ومستقرة)
+    استخراج إنستجرام عبر سيرفرات مطورين عالمية معتمدة على نطاقات .com و .tech المقبولة في Railway
     """
     clean_url = url.split("?")[0]
     if not clean_url.endswith("/"):
@@ -75,37 +75,39 @@ def extract_instagram_bot_apis(url: str) -> tuple:
     media_urls = []
     debug_logs = []
     
-    # قائمة الـ APIs المستقرة المخصصة للمطورين لعام 2026
+    # 🌟 القائمة المحدثة بالسيرفرات الموثوقة والمحمية من الحجب والـ DNS
     apis = [
-        ("Nayan Pro API", f"https://nayan-video-downloader.vercel.app/api/instagram?url={encoded_url}"),
-        ("BK9 Fun API", f"https://bk9.fun/download/instagram?url={encoded_url}"),
-        ("Siputzx API", f"https://api.siputzx.my.id/api/d/igdl?url={encoded_url}"),
-        ("Agatz API", f"https://api.agatz.my.id/api/instagram?url={encoded_url}")
+        ("Itzpire Global API", f"https://itzpire.com/download/instagram?url={encoded_url}"),
+        ("Maher Enterprise API", f"https://api.maher-zubair.tech/download/instagram?url={encoded_url}"),
+        ("Sandip Regional API", f"https://api.sandipbaruwal.com.np/instagram?url={encoded_url}")
     ]
     
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
     for name, api_url in apis:
         try:
-            resp = requests.get(api_url, headers=headers, timeout=12, verify=False)
+            resp = requests.get(api_url, headers=headers, timeout=15, verify=False)
             if resp.status_code == 200:
                 res = resp.json()
                 
-                # مستخرج JSON الذكي لقراءة مصفوفات الروابط المباشرة للفيديوهات والصور
+                # طبقة فك وقراءة الـ JSON الذكية بجميع أشكالها المتوقعة من السيرفرات
                 extracted_links = []
-                data_source = res.get("data") or res.get("result") or res.get("BK9") or res
+                data_source = res.get("data") or res.get("result") or res.get("urls") or res
                 
                 if isinstance(data_source, list):
                     for item in data_source:
-                        if isinstance(item, dict) and item.get("url"):
-                            extracted_links.append(item.get("url"))
+                        if isinstance(item, dict):
+                            link = item.get("url") or item.get("download") or item.get("src")
+                            if link: extracted_links.append(link)
                         elif isinstance(item, str) and item.startswith("http"):
                             extracted_links.append(item)
                 elif isinstance(data_source, dict):
-                    if "url" in data_source:
-                        extracted_links.append(data_source["url"])
+                    link = data_source.get("url") or data_source.get("download") or data_source.get("video")
+                    if link:
+                        if isinstance(link, list): extracted_links.extend(link)
+                        else: extracted_links.append(link)
                 
-                # فرز وتجهيز الروابط المستخرجة بنجاح
+                # معالجة وتصنيف الروابط المستخرجة
                 for link in extracted_links:
                     if link and isinstance(link, str) and link.startswith("http"):
                         t = "photo" if any(ext in link.lower() for ext in [".jpg", ".jpeg", ".webp", ".png"]) else "video"
@@ -114,7 +116,7 @@ def extract_instagram_bot_apis(url: str) -> tuple:
                 if media_urls:
                     return media_urls, debug_logs
                 else:
-                    debug_logs.append(f"{name}: لم يتم العثور على روابط مباشرة داخل الـ JSON")
+                    debug_logs.append(f"{name}: استجاب السيرفر بنجاح ولكن مصفوفة الروابط فارغة.")
             else:
                 debug_logs.append(f"{name}: HTTP {resp.status_code}")
         except Exception as e:
@@ -205,10 +207,10 @@ async def media_downloader_router(client, message):
         return
 
     url = message.text.strip()
-    processing_msg = await message.reply("⏳ **جاري جلب الفيديو عبر السيرفرات المخصصة...**", quote=True)
+    processing_msg = await message.reply("⏳ **جاري جلب الوسائط واستخراج الروابط المباشرة...**", quote=True)
     
     try:
-        # --- معالجة تيك توك المستقرة كلياً ---
+        # --- معالجة تيك توك المستقرة ---
         if "tiktok.com" in url:
             data = await asyncio.to_thread(extract_tiktok_requests, url)
             if not data: return await processing_msg.edit("❌ فشل استخراج بيانات تيك توك.")
@@ -221,7 +223,7 @@ async def media_downloader_router(client, message):
                 if data.get("audio"): await client.send_audio(message.chat.id, audio=data["audio"])
             await processing_msg.delete()
 
-        # --- معالجة إنستجرام المعززة عبر الـ APIs المخصصة ---
+        # --- معالجة إنستجرام المعززة عبر النطاقات العالمية ---
         elif "instagram.com" in url:
             media_list, debug_logs = await asyncio.to_thread(extract_instagram_bot_apis, url)
             
@@ -250,6 +252,6 @@ async def media_downloader_router(client, message):
         await processing_msg.edit(f"⚠️ حدث خطأ تقني غير متوقع: `{str(e)}`")
 
 if __name__ == "__main__":
-    print("🤖 Bot is running with core Network Layer...", flush=True)
+    print("🤖 Bot is running perfectly with Enterprise Core Network...", flush=True)
     app.run()
     
