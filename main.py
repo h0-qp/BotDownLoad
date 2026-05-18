@@ -25,9 +25,15 @@ START_TIME = time.time()
 app = Client("MyBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 db = KVSQ("bot_data.sqlite")
 
+# تجهيز قواعد البيانات
 if not db.exists("users"): db.set("users", [])
 if not db.exists("banned_users"): db.set("banned_users", [])
 if not db.exists("force_channel"): db.set("force_channel", "None")
+
+# 🚀 إعداد كليشة الترحيب الافتراضية الخاصة بك في الداتابيز إذا لم تكن موجودة
+if not db.exists("welcome_message"):
+    default_welcome = "- مرحبا بك {mention}\n- في بوت تحميل من جميع المواقع \n \nللتحميل ارسل الرابط فقط."
+    db.set("welcome_message", default_welcome)
 
 # ------------------------------------------------------------------------
 # دوال المساعدة والمحركات الأساسية
@@ -119,34 +125,27 @@ def download_youtube_video(url: str) -> dict:
     return None
 
 # ==========================================
-# 4. محرك تويتر / X (يدعم الصور المتعددة والفيديو) 🚀
+# 4. محرك تويتر / X (يدعم الصور المتعددة والفيديو)
 # ==========================================
 def extract_twitter_data(url: str) -> list:
-    # تحويل الرابط إلى API مخصص لتويتر
     match = re.search(r'(?:twitter\.com|x\.com)/([^/]+/status/\d+)', url)
     if not match: return []
-    
     api_url = f"https://api.vxtwitter.com/{match.group(1)}"
     scraper = cloudscraper.create_scraper()
-    
     try:
         resp = scraper.get(api_url, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
             media_list = []
-            # سحب الوسائط المتعددة بدقة عالية
             for m in data.get("media_extended", []):
-                if m["type"] == "image":
-                    media_list.append({"type": "photo", "url": m["url"]})
-                elif m["type"] in ["video", "gif"]:
-                    media_list.append({"type": "video", "url": m["url"]})
+                if m["type"] == "image": media_list.append({"type": "photo", "url": m["url"]})
+                elif m["type"] in ["video", "gif"]: media_list.append({"type": "video", "url": m["url"]})
             return media_list
-    except Exception as e:
-        print(f"Twitter Error: {e}", flush=True)
+    except Exception: pass
     return []
 
 # ==========================================
-# 5. محرك استخراج إنستجرام (المخفي كطوارئ)
+# 5. محرك استخراج إنستجرام (الخامل حالياً)
 # ==========================================
 def extract_snapinsta(url: str) -> tuple:
     clean_url = url.split("?")[0]
@@ -177,7 +176,8 @@ async def admin_panel(client, message):
         [InlineKeyboardButton("📊 الإحصائيات", callback_data="admin_stats")],
         [InlineKeyboardButton("📣 إذاعة (رسالة/ميديا)", callback_data="admin_broadcast")],
         [InlineKeyboardButton("🚫 حظر شخص", callback_data="admin_ban"), InlineKeyboardButton("✅ إلغاء حظر", callback_data="admin_unban")],
-        [InlineKeyboardButton("🔄 تغيير قناة الاشتراك", callback_data="change_fsub")]
+        [InlineKeyboardButton("🔄 تغيير قناة الاشتراك", callback_data="change_fsub")],
+        [InlineKeyboardButton("📝 تغيير كليشة الترحيب", callback_data="change_welcome")] # 🚀 الزر الجديد
     ])
     await message.reply("👑 **مرحباً بك في لوحة الإدارة الاحترافية:**\nاختر الإجراء المطلوب من الأزرار أدناه:", reply_markup=btns)
 
@@ -247,8 +247,27 @@ async def change_force_channel(client, callback):
             await answer.reply(f"✅ تم حفظ القناة بنجاح!\nالقناة الحالية: {answer.text.strip()}")
     except asyncio.TimeoutError: await client.send_message(chat_id, "⏱️ تم الإلغاء.")
 
+# 🚀 معالج تغيير كليشة الترحيب من لوحة التحكم ديناميكياً
+@app.on_callback_query(filters.regex("change_welcome") & filters.user(OWNER_ID))
+async def change_welcome_msg(client, callback):
+    chat_id = callback.message.chat.id
+    try:
+        hint_text = (
+            "📝 **أرسل الآن كليشة الترحيب الجديدة الكملة:**\n\n"
+            "💡 **معلومة مفيدة:** تكدر تستخدم الكلمة المفتاحية `{mention}` بداخل نص الرسالة، "
+            "والبوت تلقائياً راح يستبدلها بمنشن العضو الجديد (اسمه كرابط أزرق)."
+        )
+        answer = await client.ask(chat_id, hint_text, timeout=120)
+        if answer.text:
+            db.set("welcome_message", answer.text.strip())
+            await answer.reply(f"✅ **تم حفظ كليشة الترحيب الجديدة بنجاح!**\n\nالرسالة الحالية هسه صار شكلها هج:\n\n{answer.text.strip()}")
+        else:
+            await answer.reply("❌ عذراً، يجب إرسال رسالة نصية صالحة.")
+    except asyncio.TimeoutError:
+        await client.send_message(chat_id, "⏱️ انتهى وقت انتظار الرد، تم إلغاء العملية.")
+
 # ------------------------------------------------------------------------
-# معالجات الأوامر الأساسية 
+# معالجات الأوامر الأساسية (تحميل كليشة الترحيب الديناميكية)
 # ------------------------------------------------------------------------
 
 @app.on_message(filters.command("start") & filters.private)
@@ -269,11 +288,13 @@ async def start_command(client, message):
         await message.reply("عذراً، يجب عليك الاشتراك في القناة أولاً لتتمكن من استخدام البوت.", reply_markup=btn)
         return
 
-    welcome_text = (
-        f"- مرحبا بك {message.from_user.mention}\n"
-        f"- في بوت تحميل من جميع المواقع \n\n"
-        f"للتحميل ارسل الرابط فقط."
-    )
+    # 🚀 سحب رسالة الترحيب الحالية من قاعدة البيانات وعمل منشن للعضو
+    welcome_template = db.get("welcome_message")
+    if "{mention}" in welcome_template:
+        welcome_text = welcome_template.replace("{mention}", message.from_user.mention)
+    else:
+        welcome_text = welcome_template
+        
     await message.reply(welcome_text)
 
 # ------------------------------------------------------------------------
@@ -301,7 +322,7 @@ async def media_downloader_router(client, message):
     
     try:
         # ==========================================
-        # قسم تويتر (X) 🐦
+        # قسم تويتر (X) 
         # ==========================================
         if "twitter.com" in url or "x.com" in url:
             media_list = await asyncio.to_thread(extract_twitter_data, url)
@@ -314,14 +335,14 @@ async def media_downloader_router(client, message):
                 else: await client.send_photo(message.chat.id, photo=media["url"], caption="🤖 بواسطة البوت", reply_to_message_id=message.id)
             elif len(media_list) > 1:
                 media_group = []
-                for m in media_list[:4]: # تويتر يسمح بـ 4 صور كحد أقصى
+                for m in media_list[:4]: 
                     if m["type"] == "video": media_group.append(InputMediaVideo(m["url"]))
                     else: media_group.append(InputMediaPhoto(m["url"]))
                 await client.send_media_group(message.chat.id, media=media_group, reply_to_message_id=message.id)
             await processing_msg.delete()
 
         # ==========================================
-        # قسم يوتيوب (Shorts) 📺
+        # قسم يوتيوب (Shorts) 
         # ==========================================
         elif "youtube.com" in url or "youtu.be" in url:
             data = await asyncio.to_thread(download_youtube_video, url)
@@ -332,11 +353,11 @@ async def media_downloader_router(client, message):
             try:
                 await client.send_video(message.chat.id, video=data['path'], caption=caption, reply_to_message_id=message.id)
             finally:
-                if os.path.exists(data['path']): os.remove(data['path']) # مسح الملف بعد الإرسال
+                if os.path.exists(data['path']): os.remove(data['path']) 
             await processing_msg.delete()
 
         # ==========================================
-        # قسم التيك توك 🎵
+        # قسم التيك توك 
         # ==========================================
         elif "tiktok.com" in url:
             data = await asyncio.to_thread(extract_tiktok_data, url)
@@ -358,7 +379,7 @@ async def media_downloader_router(client, message):
             await processing_msg.delete()
 
         # ==========================================
-        # قسم بنترست 📌
+        # قسم بنترست 
         # ==========================================
         elif "pinterest.com" in url or "pin.it" in url:
             data = await asyncio.to_thread(extract_pinterest_data, url)
@@ -369,7 +390,7 @@ async def media_downloader_router(client, message):
             await processing_msg.delete()
 
         # ==========================================
-        # قسم إنستجرام 📸
+        # قسم إنستجرام
         # ==========================================
         elif "instagram.com" in url:
             media_list, debug = await asyncio.to_thread(extract_snapinsta, url)
@@ -382,21 +403,4 @@ async def media_downloader_router(client, message):
             elif len(media_list) > 1:
                 media_group = []
                 for m in media_list[:10]:
-                    if m["type"] == "video": media_group.append(InputMediaVideo(m["url"]))
-                    else: media_group.append(InputMediaPhoto(m["url"]))
-                await client.send_media_group(message.chat.id, media=media_group, reply_to_message_id=message.id)
-            await processing_msg.delete()
-
-        else:
-            await processing_msg.edit("❌ هذا الرابط غير مدعوم حالياً.")
-
-    except Exception as e:
-        if "WebpageCurlFailed" in str(e):
-            await processing_msg.edit("⚠️ تم جلب الرابط، لكن تيليجرام رفض رفعه لحجمه. جرب رابطاً آخر.")
-        else:
-            await processing_msg.edit(f"⚠️ حدث خطأ تقني: `{str(e)}`")
-
-if __name__ == "__main__":
-    print("🤖 Bot is running with Separate Twitter & YT Engines...", flush=True)
-    app.run()
-    
+                    if m["type"] == "video": media_group.append(InputM
