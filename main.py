@@ -1,7 +1,7 @@
 import asyncio
 import urllib.parse
 import aiohttp
-from bs4 import BeautifulSoup
+import socket
 from pyrogram import filters, enums
 from pyromod import Client
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, InputMediaVideo
@@ -51,7 +51,8 @@ async def fetch_tiktok_data(url: str) -> dict:
         return link
 
     try:
-        connector = aiohttp.TCPConnector(ssl=False)
+        # إجبار الاتصال عبر IPv4 لتجنب مشاكل Railway
+        connector = aiohttp.TCPConnector(family=socket.AF_INET, ssl=False)
         async with aiohttp.ClientSession(connector=connector) as session:
             async with session.post(api_url, data=data, timeout=15) as response:
                 if response.status == 200:
@@ -74,48 +75,59 @@ async def fetch_instagram_data(url: str) -> tuple:
     media_urls = []
     debug_logs = []
     
-    # 🌟 مصفوفة المواقع العالمية الموثوقة (Railway لا يستطيع حظرها لأنها تنتهي بـ .app و .world)
-    scrapers = [
-        ("SaveIG", "https://saveig.app/api/ajaxSearch", "https://saveig.app"),
-        ("FastDL", "https://fastdl.app/api/ajaxSearch", "https://fastdl.app"),
-        ("IGram", "https://igram.world/api/ajaxSearch", "https://igram.world"),
-        ("SnapSave", "https://snapsave.app/api/ajaxSearch", "https://snapsave.app")
+    # دمج سيرفرات مستقرة
+    apis = [
+        {"url": "https://co.wuk.sh/api/json", "type": "cobalt"},
+        {"url": "https://cobalt.cst.im/api/json", "type": "cobalt"},
+        {"url": "https://api.cobalt.biz.ua/api/json", "type": "cobalt"},
+        {"url": f"https://api.siputzx.my.id/api/d/igdl?url={urllib.parse.quote(clean_url)}", "type": "rest"},
+        {"url": f"https://nayan-video-downloader.vercel.app/nayan/igdl?url={urllib.parse.quote(clean_url)}", "type": "rest"}
     ]
     
-    connector = aiohttp.TCPConnector(ssl=False)
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+
+    # 🔥 السحر هنا: إجبار الخادم على استخدام IPv4 وتجاهل شهادات SSL
+    connector = aiohttp.TCPConnector(family=socket.AF_INET, ssl=False)
+    
     async with aiohttp.ClientSession(connector=connector) as session:
-        for name, api_url, origin in scrapers:
+        for api in apis:
+            name = api["url"].split("//")[1].split("/")[0]
             try:
-                payload = {"q": url, "t": "media", "lang": "en"}
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "X-Requested-With": "XMLHttpRequest",
-                    "Origin": origin,
-                    "Referer": origin + "/"
-                }
-                
-                async with session.post(api_url, data=payload, headers=headers, timeout=12) as resp:
-                    if resp.status == 200:
-                        res = await resp.json()
-                        html_data = res.get("data", "")
-                        if html_data:
-                            # تحليل الصفحة واستخراج الروابط كأننا متصفح
-                            soup = BeautifulSoup(html_data, "html.parser")
-                            for item in soup.find_all("div", class_="download-items"):
-                                btn = item.find("a", href=True)
-                                if btn:
-                                    link = btn['href']
-                                    t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
+                if api["type"] == "cobalt":
+                    async with session.post(api["url"], json={"url": clean_url}, headers=headers, timeout=12) as resp:
+                        if resp.status == 200:
+                            res = await resp.json()
+                            if res.get("status") in ["stream", "redirect"]:
+                                link = res.get("url")
+                                t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
+                                return [{"type": t, "url": link}], debug_logs
+                            elif res.get("status") == "picker":
+                                for item in res.get("picker", []):
+                                    link = item.get("url")
+                                    t = "photo" if item.get("type") == "photo" else "video"
                                     media_urls.append({"type": t, "url": link})
-                            
-                            if media_urls:
-                                return media_urls, debug_logs
-                            else:
-                                debug_logs.append(f"{name}: لم يتم العثور على أزرار تحميل في الـ HTML")
+                                if media_urls: return media_urls, debug_logs
                         else:
-                            debug_logs.append(f"{name}: الموقع أرجع بيانات فارغة")
-                    else:
-                        debug_logs.append(f"{name}: HTTP {resp.status}")
+                            debug_logs.append(f"{name}: HTTP {resp.status}")
+                
+                elif api["type"] == "rest":
+                    async with session.get(api["url"], headers=headers, timeout=12) as resp:
+                        if resp.status == 200:
+                            res = await resp.json()
+                            data = res.get("data") or res.get("result")
+                            if data and isinstance(data, list):
+                                for item in data:
+                                    link = item.get("url") if isinstance(item, dict) else item
+                                    if link and isinstance(link, str) and link.startswith("http"):
+                                        t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
+                                        media_urls.append({"type": t, "url": link})
+                                if media_urls: return media_urls, debug_logs
+                        else:
+                            debug_logs.append(f"{name}: HTTP {resp.status}")
             except Exception as e:
                 debug_logs.append(f"{name} Error: {str(e)}")
 
@@ -245,7 +257,7 @@ async def media_downloader_router(client, message):
 
     except Exception as e:
         if "WebpageCurlFailed" in str(e):
-            await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن تيليجرام رفض رفعه (لأن السيرفر حظر IP تيليجرام أو الحجم كبير). جرب رابطاً آخر.")
+            await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن تيليجرام رفض رفعه لكونه كبيراً أو محمياً. جرب رابطاً آخر.")
         else:
             await processing_msg.edit(f"⚠️ حدث خطأ تقني: `{str(e)}`")
 
