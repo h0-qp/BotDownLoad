@@ -47,9 +47,7 @@ async def is_subscribed(client, user_id):
 
 async def fetch_tiktok_data(url: str) -> dict:
     """استخراج بيانات تيك توك عبر API خلفي"""
-    # تنظيف رابط تيك توك أيضاً من أي زيادات
     clean_url = url.split("?")[0] if "?" in url else url
-    
     api_url = "https://www.tikwm.com/api/"
     data = {"url": clean_url, "count": 12, "cursor": 0, "web": 1, "hd": 1}
     
@@ -81,98 +79,73 @@ async def fetch_tiktok_data(url: str) -> dict:
 
 async def fetch_instagram_data(url: str) -> list:
     """
-    استخراج بيانات إنستجرام مع تنظيف الرابط أولاً
-    ويحتوي على 3 محركات (APIs) لضمان عدم الفشل.
+    استخراج بيانات إنستجرام باستخدام نظام (العُقد المتعددة)
+    يجرب 4 سيرفرات سحب مختلفة لضمان عدم الفشل.
     """
-    # 🔴 خطوة مهمة جداً: تنظيف الرابط من رموز التتبع (مثل ?igsh=)
+    # تنظيف الرابط من رموز التتبع وإضافة الشرطة المائلة
     clean_url = url.split("?")[0]
-    
-    # 1. المحرك الأساسي (Cobalt Tools)
-    api_url = "https://api.cobalt.tools/api/json"
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "Origin": "https://cobalt.tools",
-        "Referer": "https://cobalt.tools/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-    payload = {"url": clean_url}
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(api_url, json=payload, headers=headers) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    status = result.get("status")
-                    media_urls = []
-                    
-                    if status in ["stream", "redirect"]:
-                        link = result.get("url")
-                        if link:
-                            if any(ext in link.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"]):
-                                media_urls.append({"type": "photo", "url": link})
-                            else:
-                                media_urls.append({"type": "video", "url": link})
-                            
-                    elif status == "picker": 
-                        for item in result.get("picker", []):
-                            link = item.get("url")
-                            if item.get("type") == "photo" or any(ext in link.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"]):
-                                media_urls.append({"type": "photo", "url": link})
-                            else:
-                                media_urls.append({"type": "video", "url": link})
-                    
-                    if media_urls:
-                        return media_urls
-    except Exception as e:
-        print(f"Cobalt API Error: {e}")
-        pass 
+    if not clean_url.endswith("/"):
+        clean_url += "/"
         
-    # 2. المحرك الاحتياطي الأول (Siputzx API - قوي جداً للريلز)
-    backup_url_1 = f"https://api.siputzx.my.id/api/d/igdl?url={clean_url}"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(backup_url_1, headers={"User-Agent": "Mozilla/5.0"}) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    media_urls = []
-                    if result.get("status"):
-                        data = result.get("data", [])
-                        for item in data:
-                            link = item.get("url")
-                            if link:
-                                if "jpg" in link.lower() or "webp" in link.lower():
-                                    media_urls.append({"type": "photo", "url": link})
-                                else:
-                                    media_urls.append({"type": "video", "url": link})
-                        if media_urls:
-                            return media_urls
-    except Exception as e:
-        print(f"Siputzx API Error: {e}")
-        pass
+    media_urls = []
 
-    # 3. المحرك الاحتياطي الثاني (Ryzendesu API)
-    backup_url_2 = f"https://api.ryzendesu.vip/api/downloader/igdl?url={clean_url}"
+    # المحرك الأول: Siputzx API (الأكثر استقراراً حالياً)
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(backup_url_2, headers={"User-Agent": "Mozilla/5.0"}) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    media_urls = []
-                    data = result.get("data", [])
-                    if isinstance(data, list):
-                        for item in data:
+            async with session.get(f"https://api.siputzx.my.id/api/d/igdl?url={clean_url}", timeout=10) as resp:
+                if resp.status == 200:
+                    res = await resp.json()
+                    if res.get("status") and res.get("data"):
+                        for item in res["data"]:
                             link = item.get("url")
                             if link:
-                                if "jpg" in link.lower() or "webp" in link.lower() or "image" in item.get("type", ""):
-                                    media_urls.append({"type": "photo", "url": link})
-                                else:
-                                    media_urls.append({"type": "video", "url": link})
-                        if media_urls:
-                            return media_urls
-    except Exception as e:
-        print(f"Ryzendesu API Error: {e}")
-        pass
+                                t = "photo" if "jpg" in link.lower() or "webp" in link.lower() else "video"
+                                media_urls.append({"type": t, "url": link})
+                        if media_urls: return media_urls
+    except: pass
+
+    # المحرك الثاني: Agatz API
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"https://api.agatz.my.id/api/instagram?url={clean_url}", timeout=10) as resp:
+                if resp.status == 200:
+                    res = await resp.json()
+                    if res.get("status") == 200 and res.get("data"):
+                        for link in res["data"]:
+                            t = "photo" if "jpg" in link.lower() or "webp" in link.lower() else "video"
+                            media_urls.append({"type": t, "url": link})
+                        if media_urls: return media_urls
+    except: pass
+
+    # المحرك الثالث: Widipe API
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"https://widipe.com/download/igdl?url={clean_url}", timeout=10) as resp:
+                if resp.status == 200:
+                    res = await resp.json()
+                    if res.get("status") and res.get("result"):
+                        for item in res["result"]:
+                            link = item.get("url")
+                            if link:
+                                t = "photo" if "jpg" in link.lower() or "webp" in link.lower() else "video"
+                                media_urls.append({"type": t, "url": link})
+                        if media_urls: return media_urls
+    except: pass
+    
+    # المحرك الرابع: AEMT API
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"https://aemt.me/download/igdl?url={clean_url}", timeout=10) as resp:
+                if resp.status == 200:
+                    res = await resp.json()
+                    if res.get("status") and res.get("result"):
+                        for item in res["result"]:
+                            link = item.get("url")
+                            if link:
+                                t = "photo" if "jpg" in link.lower() or "webp" in link.lower() else "video"
+                                media_urls.append({"type": t, "url": link})
+                        if media_urls: return media_urls
+    except: pass
 
     return []
 
@@ -315,7 +288,7 @@ async def media_downloader_router(client, message):
         elif "instagram.com" in url:
             media_list = await fetch_instagram_data(url)
             if not media_list:
-                return await processing_msg.edit("❌ فشل استخراج البيانات. تأكد أن الحساب عام وليس خاصاً أو الرابط غير مدعوم.")
+                return await processing_msg.edit("❌ فشل استخراج البيانات.\nالسبب المحتمل: الحساب خاص (Private)، أو الفيديو محذوف، أو أن سيرفرات التحميل تواجه ضغطاً حالياً. جرب رابطاً آخر.")
             
             if len(media_list) == 1:
                 media = media_list[0]
@@ -338,7 +311,11 @@ async def media_downloader_router(client, message):
             await processing_msg.edit("❌ هذا الرابط غير مدعوم حالياً في نظام التحميل.")
 
     except Exception as e:
-        await processing_msg.edit(f"⚠️ حدث خطأ تقني أثناء الإرسال من تيليجرام: `{str(e)}`\n(قد يكون الملف كبيراً جداً).")
+        # التقاط أخطاء فشل تيليجرام في قراءة الرابط المباشر
+        if "WebpageCurlFailed" in str(e):
+            await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن سيرفرات تيليجرام فشلت في تحميله لكونه كبير الحجم أو محمي. جرب مجدداً لاحقاً.")
+        else:
+            await processing_msg.edit(f"⚠️ حدث خطأ تقني أثناء الإرسال: `{str(e)}`")
 
 # ------------------------------------------------------------------------
 # نقطة الانطلاق
@@ -346,4 +323,4 @@ async def media_downloader_router(client, message):
 if __name__ == "__main__":
     print("🤖 Bot is running...")
     app.run()
-    
+                
