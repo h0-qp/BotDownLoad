@@ -1,19 +1,18 @@
-FROM python:3.11-slim
+# استخدام نسخة بايثون خفيفة
+FROM python:3.10-slim
 
+# هذا السطر هو البديل لحرف -u (يمنع كتم السجلات ويظهرها فوراً في Railway)
+ENV PYTHONUNBUFFERED=1
+
+# تحديد مجلد العمل داخل الحاوية
 WORKDIR /app
 
-# تنصيب أدوات النظام الأساسية والـ ffmpeg لضمان تشغيل فيديوهات الستوري ومكتبة kvsqlite
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY . /app
-
+# نسخ ملف المتطلبات وتثبيت المكتبات
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-EXPOSE 8080
+# نسخ باقي ملفات المشروع (مثل main.py)
+COPY . .
 
-# ⚠️ تنبيه: إذا جان اسم ملف البوت مالتك مو (main.py)، غير الاسم بالسطر الجوه أو سمّي ملفك main.py
+# أمر تشغيل البوت
 CMD ["python", "main.py"]
-
