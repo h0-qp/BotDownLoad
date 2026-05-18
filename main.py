@@ -1,7 +1,6 @@
 import asyncio
 import re
 import aiohttp
-import urllib.parse
 from pyrogram import filters, enums
 from pyromod import Client
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, InputMediaVideo
@@ -20,19 +19,16 @@ OWNER_ID = 1160471152
 app = Client("MyBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 db = KVSQ("bot_data.sqlite")
 
-# إعداد قيم قاعدة البيانات الافتراضية
 if not db.exists("users"):
     db.set("users", [])
 if not db.exists("force_channel"):
     db.set("force_channel", "None")
 
-
 # ------------------------------------------------------------------------
-# دوال المساعدة والمحركات الأساسية (Helpers & Scrapers)
+# دوال المساعدة والمحركات الأساسية
 # ------------------------------------------------------------------------
 
 async def is_subscribed(client, user_id):
-    """التحقق من اشتراك المستخدم في القناة الإجبارية"""
     channel = db.get("force_channel")
     if channel == "None":
         return True
@@ -47,87 +43,65 @@ async def is_subscribed(client, user_id):
     return False
 
 async def fetch_tiktok_data(url: str) -> dict:
-    """استخراج بيانات تيك توك عبر API خلفي"""
     clean_url = url.split("?")[0] if "?" in url else url
     api_url = "https://www.tikwm.com/api/"
     data = {"url": clean_url, "count": 12, "cursor": 0, "web": 1, "hd": 1}
     
     def fix_url(link):
-        if link and link.startswith("/"):
-            return "https://www.tikwm.com" + link
+        if link and link.startswith("/"): return "https://www.tikwm.com" + link
         return link
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(api_url, data=data) as response:
-            if response.status != 200:
-                return None
-            result = await response.json()
-            if result.get("code") == 0:
-                body = result.get("data")
-                if "images" in body:
-                    return {
-                        "type": "images",
-                        "images": [fix_url(img) for img in body["images"]],
-                        "audio": fix_url(body.get("music"))
-                    }
-                else:
-                    return {
-                        "type": "video",
-                        "video_url": fix_url(body.get("play")),
-                        "title": body.get("title")
-                    }
-            return None
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(api_url, data=data, timeout=15) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    if result.get("code") == 0:
+                        body = result.get("data")
+                        if "images" in body:
+                            return {"type": "images", "images": [fix_url(i) for i in body["images"]], "audio": fix_url(body.get("music"))}
+                        else:
+                            return {"type": "video", "video_url": fix_url(body.get("play")), "title": body.get("title")}
+    except Exception as e:
+        print(f"TikTok API Error: {e}", flush=True)
+    return None
 
-async def fetch_instagram_data(url: str) -> list:
+async def fetch_instagram_data(url: str) -> tuple:
     """
-    استخراج بيانات إنستجرام باستخدام محركات جديدة وتشفير الروابط.
+    يقوم بإرجاع: (قائمة الروابط، قائمة الأخطاء للتشخيص)
     """
-    # 1. تنظيف الرابط
     clean_url = url.split("?")[0]
     if not clean_url.endswith("/"):
         clean_url += "/"
         
-    # 2. تشفير الرابط (مهم جداً للـ APIs)
-    encoded_url = urllib.parse.quote(clean_url)
     media_urls = []
+    debug_logs = []
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-    # المحرك الأول: Nayan API (سريع جداً ومستقر)
+    # المحرك 1: Siputzx (أرسلنا الرابط خام بدون تشفير لأنه يفضل ذلك)
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"https://nayan-video-downloader.vercel.app/nayan/igdl?url={encoded_url}", headers=headers, timeout=12) as resp:
+            async with session.get(f"https://api.siputzx.my.id/api/d/igdl?url={clean_url}", headers=headers, timeout=12) as resp:
                 if resp.status == 200:
                     res = await resp.json()
-                    if "data" in res and isinstance(res["data"], list):
+                    if res.get("status") and res.get("data"):
                         for item in res["data"]:
                             link = item.get("url")
                             if link:
                                 t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
                                 media_urls.append({"type": t, "url": link})
-                        if media_urls: return media_urls
+                        if media_urls: return media_urls, debug_logs
+                    else:
+                        debug_logs.append(f"Siputzx: API returned empty data. Response: {res}")
+                else:
+                    debug_logs.append(f"Siputzx: HTTP {resp.status}")
     except Exception as e:
-        print(f"Nayan API Failed: {e}")
+        debug_logs.append(f"Siputzx Failed: {str(e)}")
 
-    # المحرك الثاني: BK9 API (الخطة البديلة الأقوى)
+    # المحرك 2: Ryzendesu
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"https://bk9.fun/download/instagram?url={encoded_url}", headers=headers, timeout=12) as resp:
-                if resp.status == 200:
-                    res = await resp.json()
-                    if res.get("status") and "BK9" in res:
-                        for item in res["BK9"]:
-                            link = item.get("url")
-                            if link:
-                                t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
-                                media_urls.append({"type": t, "url": link})
-                        if media_urls: return media_urls
-    except Exception as e:
-        print(f"BK9 API Failed: {e}")
-
-    # المحرك الثالث: Ryzendesu API
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(f"https://api.ryzendesu.vip/api/downloader/igdl?url={encoded_url}", headers=headers, timeout=12) as resp:
+            async with session.get(f"https://api.ryzendesu.vip/api/downloader/igdl?url={clean_url}", headers=headers, timeout=12) as resp:
                 if resp.status == 200:
                     res = await resp.json()
                     if res.get("data"):
@@ -136,41 +110,39 @@ async def fetch_instagram_data(url: str) -> list:
                             if link:
                                 t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
                                 media_urls.append({"type": t, "url": link})
-                        if media_urls: return media_urls
+                        if media_urls: return media_urls, debug_logs
+                    else:
+                        debug_logs.append("Ryzendesu: No data in response.")
+                else:
+                    debug_logs.append(f"Ryzendesu: HTTP {resp.status}")
     except Exception as e:
-        print(f"Ryzendesu API Failed: {e}")
-
-    # المحرك الرابع: Cobalt (نسخة Wuk.sh المستقرة)
+        debug_logs.append(f"Ryzendesu Failed: {str(e)}")
+        
+    # المحرك 3: API Vreden (جديد وقوي جداً)
     try:
-        cobalt_headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0"
-        }
         async with aiohttp.ClientSession() as session:
-            async with session.post("https://co.wuk.sh/api/json", json={"url": clean_url}, headers=cobalt_headers, timeout=12) as resp:
+            async with session.get(f"https://api.vreden.web.id/api/igdownload?url={clean_url}", headers=headers, timeout=12) as resp:
                 if resp.status == 200:
                     res = await resp.json()
-                    if res.get("status") in ["stream", "redirect"]:
-                        link = res.get("url")
-                        if link:
-                            t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
-                            return [{"type": t, "url": link}]
-                    elif res.get("status") == "picker":
-                        for item in res.get("picker", []):
+                    if res.get("result") and res["result"].get("url"):
+                        for item in res["result"]["url"]:
                             link = item.get("url")
                             if link:
-                                t = "photo" if item.get("type") == "photo" else "video"
+                                t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
                                 media_urls.append({"type": t, "url": link})
-                        if media_urls: return media_urls
+                        if media_urls: return media_urls, debug_logs
+                    else:
+                        debug_logs.append("Vreden: Invalid format returned.")
+                else:
+                    debug_logs.append(f"Vreden: HTTP {resp.status}")
     except Exception as e:
-        print(f"Cobalt API Failed: {e}")
+        debug_logs.append(f"Vreden Failed: {str(e)}")
 
-    return []
+    return [], debug_logs
 
 
 # ------------------------------------------------------------------------
-# معالجات الأوامر (Command Handlers)
+# معالجات الأوامر
 # ------------------------------------------------------------------------
 
 @app.on_message(filters.command("start") & filters.private)
@@ -194,20 +166,15 @@ async def start_command(client, message):
 
     channel = db.get("force_channel")
     if not await is_subscribed(client, user_id):
-        btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📢 اضغط هنا للاشتراك", url=f"https://t.me/{channel.replace('@', '')}")]
-        ])
-        await message.reply(
-            "عذراً، يجب عليك الاشتراك في القناة أولاً لتتمكن من استخدام البوت.\nبعد الاشتراك، أرسل /start مجدداً.",
-            reply_markup=btn
-        )
+        btn = InlineKeyboardMarkup([[InlineKeyboardButton("📢 اضغط هنا للاشتراك", url=f"https://t.me/{channel.replace('@', '')}")]])
+        await message.reply("عذراً، يجب عليك الاشتراك في القناة أولاً لتتمكن من استخدام البوت.\nبعد الاشتراك، أرسل /start مجدداً.", reply_markup=btn)
         return
 
     await message.reply("✅ مرحباً بك! أرسل لي رابط أي فيديو أو منشور من (تيك توك، إنستجرام) وسأقوم بتحميله فوراً.")
 
 
 # ------------------------------------------------------------------------
-# لوحة التحكم والإدارة (Admin Panel & Broadcasting)
+# لوحة التحكم والإدارة
 # ------------------------------------------------------------------------
 
 @app.on_message(filters.command("admin") & filters.user(OWNER_ID) & filters.private)
@@ -217,7 +184,6 @@ async def admin_panel(client, message):
         [InlineKeyboardButton("📣 إرسال إذاعة", callback_data="broadcast")]
     ])
     await message.reply("مرحباً بك في لوحة الإدارة، اختر الإجراء المطلوب:", reply_markup=btns)
-
 
 @app.on_callback_query(filters.regex("change_fsub") & filters.user(OWNER_ID))
 async def change_force_channel(client, callback):
@@ -232,7 +198,6 @@ async def change_force_channel(client, callback):
             await answer.reply("❌ الرجاء إرسال نص صالح. تم الإلغاء.")
     except asyncio.TimeoutError:
         await client.send_message(chat_id, "⏱️ انتهى وقت الانتظار، تم الإلغاء.")
-
 
 @app.on_callback_query(filters.regex("broadcast") & filters.user(OWNER_ID))
 async def broadcast_message(client, callback):
@@ -256,7 +221,7 @@ async def broadcast_message(client, callback):
 
 
 # ------------------------------------------------------------------------
-# معالج الروابط ونظام التحميل (Media Downloader Router)
+# معالج الروابط ونظام التحميل
 # ------------------------------------------------------------------------
 
 @app.on_message(filters.regex(r"https?://[^\s]+") & filters.private)
@@ -269,17 +234,12 @@ async def media_downloader_router(client, message):
     
     channel = db.get("force_channel")
     if not await is_subscribed(client, user_id):
-        btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📢 اضغط هنا للاشتراك", url=f"https://t.me/{channel.replace('@', '')}")]
-        ])
-        await message.reply(
-            "عذراً، يجب عليك الاشتراك في القناة أولاً لتتمكن من استخدام البوت.",
-            reply_markup=btn
-        )
+        btn = InlineKeyboardMarkup([[InlineKeyboardButton("📢 اضغط هنا للاشتراك", url=f"https://t.me/{channel.replace('@', '')}")]])
+        await message.reply("عذراً، يجب عليك الاشتراك في القناة أولاً لتتمكن من استخدام البوت.", reply_markup=btn)
         return
 
     url = message.text.strip()
-    processing_msg = await message.reply("⏳ **جاري معالجة الرابط واستخراج البيانات...**", quote=True)
+    processing_msg = await message.reply("⏳ **جاري معالجة الرابط...**", quote=True)
     
     try:
         # --- معالجة تيك توك ---
@@ -289,26 +249,29 @@ async def media_downloader_router(client, message):
                 return await processing_msg.edit("❌ فشل استخراج البيانات. الرابط غير صحيح أو الحساب خاص.")
             
             if data["type"] == "video":
-                await client.send_video(
-                    chat_id=message.chat.id,
-                    video=data["video_url"],
-                    caption=f"📝 {data.get('title', '')}\n\n🤖 بواسطة البوت",
-                    reply_to_message_id=message.id
-                )
+                await client.send_video(message.chat.id, video=data["video_url"], caption=f"🤖 بواسطة البوت", reply_to_message_id=message.id)
             elif data["type"] == "images":
                 media_group = [InputMediaPhoto(img) for img in data["images"]]
-                await client.send_media_group(chat_id=message.chat.id, media=media_group, reply_to_message_id=message.id)
+                await client.send_media_group(message.chat.id, media=media_group, reply_to_message_id=message.id)
                 if data.get("audio"):
-                    await client.send_audio(chat_id=message.chat.id, audio=data["audio"])
-                    
+                    await client.send_audio(message.chat.id, audio=data["audio"])
             await processing_msg.delete()
 
         # --- معالجة إنستجرام ---
         elif "instagram.com" in url:
-            media_list = await fetch_instagram_data(url)
-            if not media_list:
-                return await processing_msg.edit("❌ فشل استخراج البيانات.\nالسبب المحتمل: الحساب خاص (Private)، أو الفيديو محذوف، أو أن السيرفرات تواجه ضغطاً حالياً. جرب رابطاً آخر.")
+            # نستلم البيانات ومعها سجل الأخطاء
+            media_list, debug_logs = await fetch_instagram_data(url)
             
+            if not media_list:
+                # هنا الميزة الجديدة: سيتم إرسال سبب الفشل الدقيق لك كصاحب البوت لتعرف المشكلة
+                error_text = "❌ **فشل استخراج البيانات.**\n(قد يكون الحساب خاصاً، أو السيرفرات محظورة مؤقتاً).\n\n"
+                error_text += "🛠️ **سجل تشخيص الأخطاء (للمطور):**\n"
+                for log in debug_logs:
+                    error_text += f"- `{log}`\n"
+                
+                return await processing_msg.edit(error_text)
+            
+            # إذا نجح السحب، يتم الإرسال
             if len(media_list) == 1:
                 media = media_list[0]
                 if media["type"] == "video":
@@ -322,7 +285,7 @@ async def media_downloader_router(client, message):
                         media_group.append(InputMediaVideo(m["url"]))
                     else:
                         media_group.append(InputMediaPhoto(m["url"]))
-                await client.send_media_group(chat_id=message.chat.id, media=media_group, reply_to_message_id=message.id)
+                await client.send_media_group(message.chat.id, media=media_group, reply_to_message_id=message.id)
             
             await processing_msg.delete()
 
@@ -331,14 +294,14 @@ async def media_downloader_router(client, message):
 
     except Exception as e:
         if "WebpageCurlFailed" in str(e):
-            await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن سيرفرات تيليجرام فشلت في إرساله لكونه كبير الحجم. جرب مجدداً لاحقاً.")
+            await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن سيرفرات تيليجرام رفضت رفعه (حجمه كبير أو رابط مقفل للـ IP). جرب رابطاً آخر.")
         else:
-            await processing_msg.edit(f"⚠️ حدث خطأ تقني أثناء الإرسال: `{str(e)}`")
+            await processing_msg.edit(f"⚠️ حدث خطأ تقني غير متوقع: `{str(e)}`")
 
 # ------------------------------------------------------------------------
 # نقطة الانطلاق
 # ------------------------------------------------------------------------
 if __name__ == "__main__":
-    print("🤖 Bot is running...")
+    print("🤖 Bot is starting...", flush=True)
     app.run()
     
