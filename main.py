@@ -1,6 +1,7 @@
 import asyncio
 import urllib.parse
 import aiohttp
+from bs4 import BeautifulSoup
 from pyrogram import filters, enums
 from pyromod import Client
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, InputMediaVideo
@@ -70,65 +71,49 @@ async def fetch_instagram_data(url: str) -> tuple:
     if not clean_url.endswith("/"):
         clean_url += "/"
         
-    encoded_url = urllib.parse.quote(clean_url)
     media_urls = []
     debug_logs = []
     
-    # قائمتك الجديدة: 6 مواقع مختلفة وبديلة كلياً يتم تجربتها بالترتيب
-    apis = [
-        ("Widipe", f"https://widipe.com/download/igdl?url={encoded_url}"),
-        ("Siputzx", f"https://api.siputzx.my.id/api/d/igdl?url={encoded_url}"),
-        ("AEMT", f"https://aemt.me/download/igdl?url={encoded_url}"),
-        ("Agatz", f"https://api.agatz.my.id/api/instagram?url={encoded_url}"),
-        ("Vreden", f"https://api.vreden.web.id/api/igdownload?url={encoded_url}"),
-        ("Nayan", f"https://nayan-video-downloader.vercel.app/nayan/igdl?url={encoded_url}")
+    # 🌟 مصفوفة المواقع العالمية الموثوقة (Railway لا يستطيع حظرها لأنها تنتهي بـ .app و .world)
+    scrapers = [
+        ("SaveIG", "https://saveig.app/api/ajaxSearch", "https://saveig.app"),
+        ("FastDL", "https://fastdl.app/api/ajaxSearch", "https://fastdl.app"),
+        ("IGram", "https://igram.world/api/ajaxSearch", "https://igram.world"),
+        ("SnapSave", "https://snapsave.app/api/ajaxSearch", "https://snapsave.app")
     ]
     
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    connector = aiohttp.TCPConnector(ssl=False) # لتخطي أخطاء الحماية
-
+    connector = aiohttp.TCPConnector(ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
-        for name, api_url in apis:
+        for name, api_url, origin in scrapers:
             try:
-                async with session.get(api_url, headers=headers, timeout=12) as resp:
+                payload = {"q": url, "t": "media", "lang": "en"}
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Origin": origin,
+                    "Referer": origin + "/"
+                }
+                
+                async with session.post(api_url, data=payload, headers=headers, timeout=12) as resp:
                     if resp.status == 200:
-                        try:
-                            res = await resp.json()
-                        except:
-                            debug_logs.append(f"{name}: Failed to parse JSON")
-                            continue
-
-                        extracted_links = []
-                        # المستخرج الذكي: يبحث عن البيانات مهما كان اسم المصفوفة (data أو result)
-                        data_source = res.get("data") or res.get("result") or res
-                        
-                        if isinstance(data_source, list):
-                            for item in data_source:
-                                if isinstance(item, dict) and item.get("url"):
-                                    extracted_links.append(item.get("url"))
-                                elif isinstance(item, str) and item.startswith("http"):
-                                    extracted_links.append(item)
-                        elif isinstance(data_source, dict):
-                            if "url" in data_source:
-                                if isinstance(data_source["url"], list):
-                                    for item in data_source["url"]:
-                                        if isinstance(item, dict) and item.get("url"):
-                                            extracted_links.append(item.get("url"))
-                                        elif isinstance(item, str):
-                                            extracted_links.append(item)
-                                elif isinstance(data_source["url"], str):
-                                    extracted_links.append(data_source["url"])
-                        
-                        # فرز الروابط المستخرجة وتجهيزها للإرسال
-                        for link in extracted_links:
-                            if link and link.startswith("http"):
-                                t = "photo" if any(ext in link.lower() for ext in [".jpg", ".jpeg", ".webp", ".png"]) else "video"
-                                media_urls.append({"type": t, "url": link})
-                                
-                        if media_urls:
-                            return media_urls, debug_logs
+                        res = await resp.json()
+                        html_data = res.get("data", "")
+                        if html_data:
+                            # تحليل الصفحة واستخراج الروابط كأننا متصفح
+                            soup = BeautifulSoup(html_data, "html.parser")
+                            for item in soup.find_all("div", class_="download-items"):
+                                btn = item.find("a", href=True)
+                                if btn:
+                                    link = btn['href']
+                                    t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
+                                    media_urls.append({"type": t, "url": link})
+                            
+                            if media_urls:
+                                return media_urls, debug_logs
+                            else:
+                                debug_logs.append(f"{name}: لم يتم العثور على أزرار تحميل في الـ HTML")
                         else:
-                            debug_logs.append(f"{name}: No valid media links found")
+                            debug_logs.append(f"{name}: الموقع أرجع بيانات فارغة")
                     else:
                         debug_logs.append(f"{name}: HTTP {resp.status}")
             except Exception as e:
@@ -199,7 +184,6 @@ async def broadcast_message(client, callback):
             except: pass
         await client.send_message(chat_id, f"✅ تمت الإذاعة بنجاح لـ {success_count} مستخدم.")
     except asyncio.TimeoutError: await client.send_message(chat_id, "⏱️ انتهى وقت الانتظار، تم الإلغاء.")
-
 
 # ------------------------------------------------------------------------
 # معالج الروابط ونظام التحميل
