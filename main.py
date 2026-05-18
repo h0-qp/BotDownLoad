@@ -1,7 +1,6 @@
 import asyncio
 import urllib.parse
-from bs4 import BeautifulSoup
-from curl_cffi.requests import AsyncSession
+import aiohttp
 from pyrogram import filters, enums
 from pyromod import Client
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, InputMediaVideo
@@ -51,17 +50,16 @@ async def fetch_tiktok_data(url: str) -> dict:
         return link
 
     try:
-        # استخدام curl_cffi بصيغة متصفح كروم لتخطي أي حماية
-        async with AsyncSession(impersonate="chrome110") as session:
-            response = await session.post(api_url, data=data, timeout=15)
-            if response.status_code == 200:
-                result = response.json()
-                if result.get("code") == 0:
-                    body = result.get("data")
-                    if "images" in body:
-                        return {"type": "images", "images": [fix_url(i) for i in body["images"]], "audio": fix_url(body.get("music"))}
-                    else:
-                        return {"type": "video", "video_url": fix_url(body.get("play")), "title": body.get("title")}
+        async with aiohttp.ClientSession() as session:
+            async with session.post(api_url, data=data, timeout=15) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    if result.get("code") == 0:
+                        body = result.get("data")
+                        if "images" in body:
+                            return {"type": "images", "images": [fix_url(i) for i in body["images"]], "audio": fix_url(body.get("music"))}
+                        else:
+                            return {"type": "video", "video_url": fix_url(body.get("play")), "title": body.get("title")}
     except Exception as e:
         print(f"TikTok API Error: {e}", flush=True)
     return None
@@ -71,90 +69,68 @@ async def fetch_instagram_data(url: str) -> tuple:
     if not clean_url.endswith("/"):
         clean_url += "/"
         
-    encoded_url = urllib.parse.quote(clean_url)
     media_urls = []
     debug_logs = []
+    
+    # مصفوفة سيرفرات Cobalt المستقلة (تعمل كخطة A, B, C, D, E)
+    cobalt_instances = [
+        "https://co.wuk.sh/api/json",
+        "https://cobalt.cst.im/api/json",
+        "https://api.cobalt.zluqe.com/api/json",
+        "https://cobalt.seasi.dev/api/json",
+        "https://cobalt-api.pepegapi.heyturi.com/api/json"
+    ]
+    
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
 
-    # المحرك 1: SaveIG (الأقوى والأفضل عالمياً، كان محظوراً والآن نتخطاه)
-    try:
-        async with AsyncSession(impersonate="chrome110") as session:
-            payload = {"q": clean_url, "t": "media", "lang": "en"}
-            headers = {
-                "Origin": "https://saveig.app",
-                "Referer": "https://saveig.app/en",
-                "X-Requested-With": "XMLHttpRequest"
-            }
-            resp = await session.post("https://saveig.app/api/ajaxSearch", data=payload, headers=headers, timeout=15)
-            if resp.status_code == 200:
-                res = resp.json()
-                html_data = res.get("data", "")
-                if html_data:
-                    soup = BeautifulSoup(html_data, "html.parser")
-                    items = soup.find_all("div", class_="download-items")
-                    for item in items:
-                        btn = item.find("a", href=True)
-                        if btn:
-                            link = btn['href']
+    # التكرار عبر السيرفرات: إذا فشل واحد، ينتقل للثاني مباشرة
+    async with aiohttp.ClientSession() as session:
+        for instance in cobalt_instances:
+            instance_name = instance.split("//")[1].split("/")[0]
+            try:
+                async with session.post(instance, json={"url": clean_url}, headers=headers, timeout=10) as resp:
+                    if resp.status == 200:
+                        res = await resp.json()
+                        if res.get("status") in ["stream", "redirect"]:
+                            link = res.get("url")
+                            t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
+                            return [{"type": t, "url": link}], debug_logs
+                        elif res.get("status") == "picker":
+                            for item in res.get("picker", []):
+                                link = item.get("url")
+                                t = "photo" if item.get("type") == "photo" else "video"
+                                media_urls.append({"type": t, "url": link})
+                            if media_urls: return media_urls, debug_logs
+                    else:
+                        debug_logs.append(f"{instance_name}: HTTP {resp.status}")
+            except Exception as e:
+                debug_logs.append(f"{instance_name} Error: {str(e)}")
+
+        # محرك طوارئ أخير في حال سقوط كل سيرفرات كوبالت
+        try:
+            encoded_url = urllib.parse.quote(clean_url)
+            async with session.get(f"https://api.agatz.my.id/api/instagram?url={encoded_url}", timeout=10) as resp:
+                if resp.status == 200:
+                    res = await resp.json()
+                    if res.get("status") == 200 and res.get("data"):
+                        for link in res["data"]:
                             t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
                             media_urls.append({"type": t, "url": link})
-                    if media_urls: return media_urls, debug_logs
+                        if media_urls: return media_urls, debug_logs
                 else:
-                    debug_logs.append("SaveIG: HTML Data Empty")
-            else:
-                debug_logs.append(f"SaveIG: HTTP {resp.status_code}")
-    except Exception as e:
-        debug_logs.append(f"SaveIG Failed: {str(e)}")
-
-    # المحرك 2: Cobalt API (الخطة البديلة)
-    try:
-        async with AsyncSession(impersonate="chrome110") as session:
-            headers = {
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-                "Origin": "https://cobalt.tools",
-                "Referer": "https://cobalt.tools/"
-            }
-            resp = await session.post("https://api.cobalt.tools/api/json", json={"url": clean_url}, headers=headers, timeout=15)
-            if resp.status_code == 200:
-                res = resp.json()
-                if res.get("status") in ["stream", "redirect"]:
-                    link = res.get("url")
-                    t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
-                    return [{"type": t, "url": link}], debug_logs
-                elif res.get("status") == "picker":
-                    for item in res.get("picker", []):
-                        link = item.get("url")
-                        t = "photo" if item.get("type") == "photo" else "video"
-                        media_urls.append({"type": t, "url": link})
-                    if media_urls: return media_urls, debug_logs
-            else:
-                debug_logs.append(f"Cobalt: HTTP {resp.status_code}")
-    except Exception as e:
-        debug_logs.append(f"Cobalt Failed: {str(e)}")
-
-    # المحرك 3: Ryzendesu (تخطي حماية क्लाود فلاير)
-    try:
-        async with AsyncSession(impersonate="chrome110") as session:
-            resp = await session.get(f"https://api.ryzendesu.vip/api/downloader/igdl?url={encoded_url}", timeout=15)
-            if resp.status_code == 200:
-                res = resp.json()
-                if res.get("data"):
-                    for item in res["data"]:
-                        link = item.get("url")
-                        if link:
-                            t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
-                            media_urls.append({"type": t, "url": link})
-                    if media_urls: return media_urls, debug_logs
-            else:
-                debug_logs.append(f"Ryzendesu: HTTP {resp.status_code}")
-    except Exception as e:
-        debug_logs.append(f"Ryzendesu Failed: {str(e)}")
+                    debug_logs.append(f"Agatz API: HTTP {resp.status}")
+        except Exception as e:
+            debug_logs.append(f"Agatz API Error: {str(e)}")
 
     return [], debug_logs
 
 
 # ------------------------------------------------------------------------
-# معالجات الأوامر واللوحة (بقت كما هي)
+# معالجات الأوامر واللوحة
 # ------------------------------------------------------------------------
 
 @app.on_message(filters.command("start") & filters.private)
@@ -237,7 +213,7 @@ async def media_downloader_router(client, message):
         return
 
     url = message.text.strip()
-    processing_msg = await message.reply("⏳ **جاري معالجة الرابط عبر التخطي...**", quote=True)
+    processing_msg = await message.reply("⏳ **جاري التحميل...**", quote=True)
     
     try:
         if "tiktok.com" in url:
@@ -274,13 +250,13 @@ async def media_downloader_router(client, message):
             await processing_msg.delete()
 
         else:
-            await processing_msg.edit("❌ هذا الرابط غير مدعوم حالياً في نظام التحميل.")
+            await processing_msg.edit("❌ هذا الرابط غير مدعوم حالياً.")
 
     except Exception as e:
         if "WebpageCurlFailed" in str(e):
             await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن تيليجرام رفض رفعه. جرب رابطاً آخر.")
         else:
-            await processing_msg.edit(f"⚠️ حدث خطأ تقني غير متوقع: `{str(e)}`")
+            await processing_msg.edit(f"⚠️ حدث خطأ تقني: `{str(e)}`")
 
 if __name__ == "__main__":
     print("🤖 Bot is starting...", flush=True)
