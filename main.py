@@ -1,5 +1,6 @@
 import asyncio
 import cloudscraper
+import re  # 🚀 ضفنا هاي المكتبة للبحث العميق عن الفيديوهات المخفية
 from bs4 import BeautifulSoup
 from pyrogram import filters, enums
 from pyromod import Client
@@ -68,52 +69,40 @@ def extract_tiktok_data(url: str) -> dict:
     return None
 
 # ==========================================
-# 2. محرك استخراج بنترست (Pinterest) المباشر
+# 2. محرك استخراج بنترست (Pinterest) المطور
 # ==========================================
 def extract_pinterest_data(url: str) -> dict:
     scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
     
     try:
-        # 1. الاستخراج المباشر من الميتا تاك (سريع ومستقل)
         resp = scraper.get(url, timeout=15)
         if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, "html.parser")
             
-            # البحث عن الفيديو أولاً
-            video_tag = soup.find("meta", {"property": "og:video"}) or soup.find("meta", {"name": "og:video"})
-            if video_tag and video_tag.get("content"):
-                vid_url = video_tag["content"]
-                # تحويل روابط البث إلى روابط مباشرة mp4
-                vid_url = vid_url.replace("hls", "720p").replace(".m3u8", ".mp4")
-                return {"type": "video", "url": vid_url}
+            # 🚀 البحث العميق عن روابط الفيديو (mp4) المخبأة في السورس كود
+            mp4_matches = re.findall(r'https://[^"\'>\\]+\.mp4', resp.text)
+            
+            if mp4_matches:
+                # إذا لكى فيديو، يختار الدقة العالية 720p إذا متوفرة، أو يختار أول فيديو يلكاه
+                best_vid = next((v for v in mp4_matches if "720p" in v), mp4_matches[0])
+                return {"type": "video", "url": best_vid}
                 
-            # إذا لم يكن هناك فيديو، نسحب الصورة
+            # إذا مابيها فيديو (يعني بوست صورة عادية)، نستخرج الصورة بأعلى دقة
+            soup = BeautifulSoup(resp.text, "html.parser")
             image_tag = soup.find("meta", {"property": "og:image"}) or soup.find("meta", {"name": "og:image"})
+            
             if image_tag and image_tag.get("content"):
                 img_url = image_tag["content"]
-                # ترقية جودة الصورة إلى أعلى دقة ممكنة (Original)
+                # ترقية الجودة للمقاس الأصلي
                 img_url = img_url.replace("236x", "originals").replace("474x", "originals").replace("736x", "originals")
                 return {"type": "photo", "url": img_url}
+                
     except Exception as e:
         print(f"Pinterest Direct Error: {e}", flush=True)
-
-    # 2. الخطة البديلة: استخدام Cobalt API 
-    try:
-        headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        resp = scraper.post("https://co.wuk.sh/api/json", json={"url": url}, headers=headers, timeout=15)
-        if resp.status_code == 200:
-            res = resp.json()
-            if res.get("status") in ["stream", "redirect"]:
-                link = res.get("url")
-                t = "photo" if any(ext in link.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"]) else "video"
-                return {"type": t, "url": link}
-    except Exception as e:
-        print(f"Pinterest Cobalt Error: {e}", flush=True)
 
     return None
 
 # ==========================================
-# 3. محرك استخراج إنستجرام (الخامل حالياً)
+# 3. محرك استخراج إنستجرام
 # ==========================================
 def extract_snapinsta(url: str) -> tuple:
     clean_url = url.split("?")[0]
@@ -235,7 +224,6 @@ async def media_downloader_router(client, message):
             
             elif data["type"] == "images":
                 images = data["images"]
-                # إرسال الصور بدفعات
                 for i in range(0, len(images), 10):
                     chunk = images[i:i + 10]
                     media_group = [InputMediaPhoto(img) for img in chunk]
@@ -296,6 +284,6 @@ async def media_downloader_router(client, message):
             await processing_msg.edit(f"⚠️ حدث خطأ تقني: `{str(e)}`")
 
 if __name__ == "__main__":
-    print("🤖 Bot is running with TikTok and Pinterest...", flush=True)
+    print("🤖 Bot is running with Deep Scan Pinterest Engine...", flush=True)
     app.run()
-          
+    
