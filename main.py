@@ -1,7 +1,6 @@
 import asyncio
 import re
 import aiohttp
-from bs4 import BeautifulSoup
 from pyrogram import filters, enums
 from pyromod import Client
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, InputMediaVideo
@@ -11,14 +10,15 @@ from kvsqlite.sync import Client as KVSQ
 # ------------------------------------------------------------------------
 # الإعدادات الأساسية
 # ------------------------------------------------------------------------
-API_ID = 12588588  # استبدل بـ API_ID الخاص بك
+API_ID = 12588588 
 API_HASH = "f2e0652152a45a25dc70f5bed7907d6e"
 BOT_TOKEN = "8509012164:AAEfJcqsprCSlN2BHBX2td4UitXvK_Cu4nc"
-OWNER_ID = 1160471152  # استبدل بـ الآيدي (ID) الخاص بك لتلقي الإشعارات والتحكم
+OWNER_ID = 1160471152 
 
 # تهيئة البوت وقاعدة البيانات
 app = Client("MyBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 db = KVSQ("bot_data.sqlite")
+
 # إعداد قيم قاعدة البيانات الافتراضية
 if not db.exists("users"):
     db.set("users", [])
@@ -46,11 +46,10 @@ async def is_subscribed(client, user_id):
     return False
 
 async def fetch_tiktok_data(url: str) -> dict:
-    """استخراج بيانات تيك توك عبر API خلفي (محدث)"""
+    """استخراج بيانات تيك توك عبر API خلفي"""
     api_url = "https://www.tikwm.com/api/"
     data = {"url": url, "count": 12, "cursor": 0, "web": 1, "hd": 1}
     
-    # دالة فرعية لإصلاح الروابط الناقصة التي يرسلها الـ API
     def fix_url(link):
         if link and link.startswith("/"):
             return "https://www.tikwm.com" + link
@@ -78,39 +77,75 @@ async def fetch_tiktok_data(url: str) -> dict:
             return None
 
 async def fetch_instagram_data(url: str) -> list:
-    """استخراج بيانات إنستجرام عبر الهندسة العكسية (محدث)"""
-    # تم تغيير الدومين المعطل إلى الدومين الرئيسي
-    api_url = "https://saveig.app/api/ajaxSearch" 
+    """
+    استخراج بيانات إنستجرام باستخدام Cobalt API
+    مع نظام Backup API في حال فشل الأول.
+    """
+    # 1. المحرك الأساسي (Cobalt Tools)
+    api_url = "https://api.cobalt.tools/api/json"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "X-Requested-With": "XMLHttpRequest",
-        "Origin": "https://saveig.app",
-        "Referer": "https://saveig.app/en"
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Origin": "https://cobalt.tools",
+        "Referer": "https://cobalt.tools/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
-    payload = {"q": url, "t": "media", "lang": "en"}
+    payload = {"url": url}
     
-    async with aiohttp.ClientSession() as session:
-        async with session.post(api_url, data=payload, headers=headers) as response:
-            if response.status != 200:
-                return []
-            result = await response.json()
-            html_data = result.get("data", "")
-            if not html_data:
-                return []
-            soup = BeautifulSoup(html_data, "html.parser")
-            download_items = soup.find_all("div", class_="download-items")
-            media_urls = []
-            for item in download_items:
-                btn = item.find("a", href=True)
-                if btn:
-                    link = btn['href']
-                    if ".jpg" in link or ".webp" in link or ".png" in link:
-                        media_urls.append({"type": "photo", "url": link})
-                    else:
-                        media_urls.append({"type": "video", "url": link})
-            return media_urls
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(api_url, json=payload, headers=headers) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    status = result.get("status")
+                    media_urls = []
+                    
+                    if status in ["stream", "redirect"]:
+                        link = result.get("url")
+                        if link:
+                            if any(ext in link.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"]):
+                                media_urls.append({"type": "photo", "url": link})
+                            else:
+                                media_urls.append({"type": "video", "url": link})
+                            
+                    elif status == "picker": # منشور متعدد الأقسام
+                        for item in result.get("picker", []):
+                            link = item.get("url")
+                            if item.get("type") == "photo" or any(ext in link.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"]):
+                                media_urls.append({"type": "photo", "url": link})
+                            else:
+                                media_urls.append({"type": "video", "url": link})
+                    
+                    if media_urls:
+                        return media_urls
+    except Exception as e:
+        print(f"Cobalt API Error: {e}")
+        pass 
+        
+    # 2. المحرك الاحتياطي (Ryzendesu API)
+    backup_url = f"https://api.ryzendesu.vip/api/downloader/igdl?url={url}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(backup_url, headers={"User-Agent": "Mozilla/5.0"}) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    media_urls = []
+                    data = result.get("data", [])
+                    if isinstance(data, list):
+                        for item in data:
+                            link = item.get("url")
+                            if link:
+                                if "jpg" in link.lower() or "webp" in link.lower() or "image" in item.get("type", ""):
+                                    media_urls.append({"type": "photo", "url": link})
+                                else:
+                                    media_urls.append({"type": "video", "url": link})
+                        if media_urls:
+                            return media_urls
+    except Exception as e:
+        print(f"Backup API Error: {e}")
+        pass
+
+    return []
 
 
 # ------------------------------------------------------------------------
@@ -259,7 +294,7 @@ async def media_downloader_router(client, message):
                     await client.send_video(message.chat.id, video=media["url"], reply_to_message_id=message.id)
                 else:
                     await client.send_photo(message.chat.id, photo=media["url"], reply_to_message_id=message.id)
-            else:
+            elif len(media_list) > 1:
                 media_group = []
                 for m in media_list[:10]:
                     if m["type"] == "video":
@@ -274,7 +309,7 @@ async def media_downloader_router(client, message):
             await processing_msg.edit("❌ هذا الرابط غير مدعوم حالياً في نظام التحميل.")
 
     except Exception as e:
-        await processing_msg.edit(f"⚠️ حدث خطأ تقني أثناء المعالجة: `{str(e)}`")
+        await processing_msg.edit(f"⚠️ حدث خطأ تقني أثناء الإرسال من تيليجرام: `{str(e)}`\n(قد يكون الملف كبيراً جداً أو الرابط محمي).")
 
 # ------------------------------------------------------------------------
 # نقطة الانطلاق
