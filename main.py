@@ -1,5 +1,4 @@
 import asyncio
-import urllib.parse
 import cloudscraper
 from bs4 import BeautifulSoup
 from pyrogram import filters, enums
@@ -9,7 +8,7 @@ from pyrogram.errors import UserNotParticipant
 from kvsqlite.sync import Client as KVSQ
 
 # ------------------------------------------------------------------------
-# الإعدادات الأساسية
+# الإعدادات الأساسية الخاصة بك
 # ------------------------------------------------------------------------
 API_ID = 12588588 
 API_HASH = "f2e0652152a45a25dc70f5bed7907d6e"
@@ -41,8 +40,7 @@ async def is_subscribed(client, user_id):
         return True
     return False
 
-def extract_tiktok(url: str) -> dict:
-    """استخراج تيك توك باستخدام الموقع الثابت"""
+def extract_tiktok_data(url: str) -> dict:
     clean_url = url.split("?")[0] if "?" in url else url
     api_url = "https://www.tikwm.com/api/"
     data = {"url": clean_url, "count": 12, "cursor": 0, "web": 1, "hd": 1}
@@ -66,52 +64,108 @@ def extract_tiktok(url: str) -> dict:
         print(f"TikTok Error: {e}", flush=True)
     return None
 
-def extract_instagram_sharaf(url: str) -> list:
-    """استخراج إنستجرام بالاعتماد على موقع واحد ثابت وتخطي الحماية باقتراحك (Cloudscraper)"""
+def extract_snapinsta(url: str) -> tuple:
+    """
+    سحب إنستجرام حصرياً من موقع SnapInsta.to بناءً على تحليل الـ DevTools
+    """
     clean_url = url.split("?")[0]
     media_urls = []
+    debug_logs = []
     
-    # تهيئة كاسر الحماية ليقلد متصفح جوجل كروم على ويندوز
-    scraper = cloudscraper.create_scraper(browser={
-        'browser': 'chrome',
-        'platform': 'windows',
-        'desktop': True
-    })
+    # تهيئة كاسر الحماية
+    scraper = cloudscraper.create_scraper(
+        browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True}
+    )
     
-    # موقع SaveIG (الأقوى والأثبت عالمياً، ومعاه FastDL كاحتياط صامت)
-    sites = [
-        ("https://saveig.app/api/ajaxSearch", "https://saveig.app"),
-        ("https://fastdl.app/api/ajaxSearch", "https://fastdl.app")
-    ]
-    
-    for api_url, origin in sites:
-        payload = {"q": clean_url, "t": "media", "lang": "en"}
+    try:
+        # الخطوة 1: زيارة الصفحة الرئيسية لأخذ ملفات الارتباط (Cookies) وتخطي كلاود فلاير
+        main_url = "https://snapinsta.to/en2"
+        scraper.get(main_url, timeout=10)
+        
+        # الخطوة 2: ضرب الـ API بالبيانات المستخرجة من الصورة
+        api_url = "https://snapinsta.to/api/ajaxSearch"
         headers = {
-            "Origin": origin, 
-            "Referer": origin + "/", 
-            "X-Requested-With": "XMLHttpRequest"
+            "Origin": "https://snapinsta.to",
+            "Referer": "https://snapinsta.to/en2",
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
         }
         
-        try:
-            resp = scraper.post(api_url, data=payload, headers=headers, timeout=15)
-            if resp.status_code == 200:
-                html_data = resp.json().get("data", "")
-                if html_data:
-                    soup = BeautifulSoup(html_data, "html.parser")
-                    for item in soup.find_all("div", class_="download-items"):
-                        btn = item.find("a", href=True)
-                        if btn:
-                            link = btn['href']
-                            t = "photo" if any(ext in link.lower() for ext in [".jpg", ".jpeg", ".webp", ".png"]) else "video"
-                            media_urls.append({"type": t, "url": link})
-                    
-                    # إذا جلبنا الروابط بنجاح، نخرج من اللوب فوراً
-                    if media_urls: 
-                        return media_urls
-        except Exception:
-            continue
+        payload = {
+            "q": clean_url,
+            "t": "media",
+            "v": "v2",
+            "lang": "en"
+            # تعمدنا إخفاء cftoken حتى يقوم السيرفر بتخطيها إذا كانت الكوكيز سليمة
+        }
+        
+        resp = scraper.post(api_url, data=payload, headers=headers, timeout=15)
+        
+        if resp.status_code == 200:
+            res_json = resp.json()
+            html_content = res_json.get("data", "")
             
-    return media_urls
+            if html_content:
+                # الكود يرجع HTML، نستخدم BeautifulSoup حتى نسحب الروابط
+                soup = BeautifulSoup(html_content, "html.parser")
+                for item in soup.find_all("div", class_="download-items"):
+                    btn = item.find("a", href=True)
+                    if btn:
+                        link = btn['href']
+                        t = "photo" if any(ext in link.lower() for ext in [".jpg", ".jpeg", ".webp"]) else "video"
+                        media_urls.append({"type": t, "url": link})
+                
+                if media_urls:
+                    return media_urls, debug_logs
+                else:
+                    debug_logs.append("SnapInsta: تم الاتصال، لكن لم نعثر على زر التحميل في الـ HTML.")
+            else:
+                debug_logs.append(f"SnapInsta: استجابة فارغة (ربما توكن CF مطلوب). النص: {resp.text[:50]}")
+        else:
+            debug_logs.append(f"SnapInsta: HTTP {resp.status_code} - {resp.text[:50]}")
+            
+    except Exception as e:
+        debug_logs.append(f"SnapInsta Error: {str(e)}")
+
+    # ============================================================
+    # خطة بديلة (B): استخدام موقع SnapInsta.app (النسخة الأخرى) 
+    # في حال فشل النسخة .to بسبب الـ cftoken
+    # ============================================================
+    if not media_urls:
+        try:
+            api_url_2 = "https://snapinsta.app/action2.php"
+            headers_2 = {
+                "Origin": "https://snapinsta.app",
+                "Referer": "https://snapinsta.app/",
+                "X-Requested-With": "XMLHttpRequest"
+            }
+            payload_2 = {
+                "url": clean_url,
+                "action": "post"
+            }
+            
+            resp_2 = scraper.post(api_url_2, data=payload_2, headers=headers_2, timeout=15)
+            if resp_2.status_code == 200:
+                # الموقع يرجع HTML مباشرة بدون JSON
+                soup = BeautifulSoup(resp_2.text, "html.parser")
+                for a in soup.find_all("a", href=True):
+                    link = a["href"]
+                    # نبحث عن زر التحميل
+                    if link.startswith("http") and ("download" in str(a).lower() or "btn" in str(a.get("class"))):
+                        t = "photo" if any(ext in link.lower() for ext in [".jpg", ".jpeg", ".webp"]) else "video"
+                        media_urls.append({"type": t, "url": link})
+                        
+                if media_urls:
+                    return media_urls, debug_logs
+                else:
+                    debug_logs.append("SnapInsta.app: لم يتم العثور على أزرار.")
+            else:
+                debug_logs.append(f"SnapInsta.app: HTTP {resp_2.status_code}")
+        except Exception as e:
+            debug_logs.append(f"SnapInsta.app Error: {str(e)}")
+
+    return media_urls, debug_logs
 
 # ------------------------------------------------------------------------
 # معالجات الأوامر ولوحة الإدارة
@@ -124,7 +178,7 @@ async def start_command(client, message):
     if user_id not in users:
         users.append(user_id)
         db.set("users", users)
-        try: await client.send_message(OWNER_ID, f"🔔 **عضو جديد:**\nالاسم: {message.from_user.first_name}\nالآيدي: `{user_id}`\nإجمالي الأعضاء: {len(users)}")
+        try: await client.send_message(OWNER_ID, f"🔔 **عضو جديد:**\nالاسم: {message.from_user.first_name}\nالآيدي: `{user_id}`")
         except: pass
 
     channel = db.get("force_channel")
@@ -150,7 +204,7 @@ async def change_force_channel(client, callback):
         answer = await client.ask(chat_id, "الرجاء إرسال معرف القناة الجديدة (يجب أن يبدأ بـ @):\nلإلغاء الاشتراك الإجباري أرسل 'None'", timeout=60)
         if answer.text:
             db.set("force_channel", answer.text.strip())
-            await answer.reply(f"✅ تم حفظ القناة بنجاح: {answer.text.strip()}")
+            await answer.reply(f"✅ تم حفظ القناة بنجاح!\nالقناة الحالية: {answer.text.strip()}")
         else: await answer.reply("❌ تم الإلغاء.")
     except asyncio.TimeoutError: await client.send_message(chat_id, "⏱️ انتهى وقت الانتظار.")
 
@@ -167,7 +221,7 @@ async def broadcast_message(client, callback):
                 await answer.copy(uid)
                 success += 1
             except: pass
-        await client.send_message(chat_id, f"✅ تمت الإذاعة لـ {success} مستخدم.")
+        await client.send_message(chat_id, f"✅ تمت الإذاعة بنجاح لـ {success} مستخدم.")
     except asyncio.TimeoutError: await client.send_message(chat_id, "⏱️ انتهى وقت الانتظار.")
 
 # ------------------------------------------------------------------------
@@ -189,11 +243,11 @@ async def media_downloader_router(client, message):
         return
 
     url = message.text.strip()
-    processing_msg = await message.reply("⏳ **جاري التحميل...**", quote=True)
+    processing_msg = await message.reply("⏳ **جاري الاستخراج من SnapInsta...**", quote=True)
     
     try:
         if "tiktok.com" in url:
-            data = await asyncio.to_thread(extract_tiktok, url)
+            data = await asyncio.to_thread(extract_tiktok_data, url)
             if not data: return await processing_msg.edit("❌ فشل استخراج بيانات تيك توك.")
             
             if data["type"] == "video":
@@ -205,10 +259,13 @@ async def media_downloader_router(client, message):
             await processing_msg.delete()
 
         elif "instagram.com" in url:
-            media_list = await asyncio.to_thread(extract_instagram_sharaf, url)
+            media_list, debug_logs = await asyncio.to_thread(extract_snapinsta, url)
             
             if not media_list:
-                return await processing_msg.edit("❌ **فشل استخراج البيانات.** تأكد أن الحساب عام وليس خاصاً.")
+                error_text = "❌ **فشل استخراج البيانات.**\n"
+                error_text += "🛠️ **سجل الأخطاء (للمطور):**\n"
+                for log in debug_logs: error_text += f"- `{log}`\n"
+                return await processing_msg.edit(error_text)
             
             if len(media_list) == 1:
                 media = media_list[0]
@@ -226,9 +283,12 @@ async def media_downloader_router(client, message):
             await processing_msg.edit("❌ هذا الرابط غير مدعوم حالياً.")
 
     except Exception as e:
-        await processing_msg.edit(f"⚠️ حدث خطأ تقني: `{str(e)}`")
+        if "WebpageCurlFailed" in str(e):
+            await processing_msg.edit("⚠️ تم جلب الرابط، لكن تيليجرام رفض رفعه لحجمه أو لحظر IP. جرب رابطاً آخر.")
+        else:
+            await processing_msg.edit(f"⚠️ حدث خطأ تقني: `{str(e)}`")
 
 if __name__ == "__main__":
-    print("🤖 Bot is running with Cloudscraper Bypass...", flush=True)
+    print("🤖 Bot is running targeting SnapInsta...", flush=True)
     app.run()
-    
+                
