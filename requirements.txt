@@ -2,5 +2,5 @@ pyrogram
 tgcrypto
 pyromod
 kvsqlite
-curl-cffi
+aiohttp
 beautifulsoup4
