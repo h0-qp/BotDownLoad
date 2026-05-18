@@ -3,4 +3,4 @@ tgcrypto
 pyromod
 kvsqlite
 aiohttp
-beautifulsoup4
+yt-dlp
