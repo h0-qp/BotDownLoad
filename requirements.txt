@@ -2,5 +2,5 @@ pyrogram
 tgcrypto
 pyromod
 kvsqlite
-aiohttp
-yt-dlp
+requests
+beautifulsoup4
