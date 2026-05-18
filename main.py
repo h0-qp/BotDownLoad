@@ -1,7 +1,10 @@
 import asyncio
 import time
-import cloudscraper
+import os
+import uuid
 import re
+import cloudscraper
+import yt_dlp
 from bs4 import BeautifulSoup
 from pyrogram import filters, enums
 from pyromod import Client
@@ -17,12 +20,11 @@ API_HASH = "f2e0652152a45a25dc70f5bed7907d6e"
 BOT_TOKEN = "8509012164:AAEfJcqsprCSlN2BHBX2td4UitXvK_Cu4nc"
 OWNER_ID = 1160471152 
 
-START_TIME = time.time() # لحساب وقت تشغيل البوت
+START_TIME = time.time()
 
 app = Client("MyBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 db = KVSQ("bot_data.sqlite")
 
-# تجهيز قواعد البيانات
 if not db.exists("users"): db.set("users", [])
 if not db.exists("banned_users"): db.set("banned_users", [])
 if not db.exists("force_channel"): db.set("force_channel", "None")
@@ -96,36 +98,32 @@ def extract_pinterest_data(url: str) -> dict:
     return None
 
 # ==========================================
-# 3. محرك يوتيوب وتويتر (X) المتكامل
+# 3. محرك يوتيوب وتويتر (تحميل محلي ذكي) 🚀
 # ==========================================
-def extract_global_media(url: str) -> list:
-    scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
-    
-    instances = [
-        "https://co.wuk.sh/api/json",
-        "https://cobalt.cst.im/api/json",
-        "https://api.cobalt.biz.ua/api/json"
-    ]
-    
-    for inst in instances:
-        try:
-            resp = scraper.post(inst, json={"url": url}, headers=headers, timeout=15)
-            if resp.status_code == 200:
-                res = resp.json()
-                if res.get("status") in ["stream", "redirect"]:
-                    return [{"type": "video", "url": res.get("url")}]
-                elif res.get("status") == "picker":
-                    media = []
-                    for item in res.get("picker", []):
-                        t = "photo" if item.get("type") == "photo" else "video"
-                        media.append({"type": t, "url": item.get("url")})
-                    return media
-        except Exception: continue
-    return []
+def download_yt_twitter(url: str) -> dict:
+    """يقوم بتحميل الفيديو مؤقتاً لتجاوز حظر الـ IP الخاص بيوتيوب وتويتر"""
+    # توليد اسم عشوائي للفيديو حتى لا تتداخل الملفات
+    filename = f"temp_{uuid.uuid4().hex[:6]}.mp4"
+    ydl_opts = {
+        'outtmpl': filename,
+        'quiet': True,
+        'no_warnings': True,
+        'format': 'b[ext=mp4]/best', # اختيار أفضل جودة بصيغة mp4
+        'max_filesize': 50 * 1024 * 1024, # الحد الأقصى 50 ميجا (لحماية السيرفر وتيليجرام)
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if os.path.exists(filename):
+                return {"path": filename, "title": info.get("title", "")}
+    except Exception as e:
+        print(f"yt-dlp Error: {e}", flush=True)
+        if os.path.exists(filename):
+            os.remove(filename) # مسح الملف إذا حدث خطأ
+    return None
 
 # ==========================================
-# 4. محرك استخراج إنستجرام (الخامل حالياً)
+# 4. محرك استخراج إنستجرام (المخفي كطوارئ)
 # ==========================================
 def extract_snapinsta(url: str) -> tuple:
     clean_url = url.split("?")[0]
@@ -227,7 +225,7 @@ async def change_force_channel(client, callback):
     except asyncio.TimeoutError: await client.send_message(chat_id, "⏱️ تم الإلغاء.")
 
 # ------------------------------------------------------------------------
-# معالجات الأوامر الأساسية (كليشة الترحيب الجديدة)
+# معالجات الأوامر الأساسية 
 # ------------------------------------------------------------------------
 
 @app.on_message(filters.command("start") & filters.private)
@@ -248,7 +246,6 @@ async def start_command(client, message):
         await message.reply("عذراً، يجب عليك الاشتراك في القناة أولاً لتتمكن من استخدام البوت.", reply_markup=btn)
         return
 
-    # الكليشة الجديدة المطلوبة مع المنشن الاحترافي
     welcome_text = (
         f"- مرحبا بك {message.from_user.mention}\n"
         f"- في بوت تحميل من جميع المواقع \n\n"
@@ -263,7 +260,7 @@ async def start_command(client, message):
 @app.on_message(filters.regex(r"https?://[^\s]+") & filters.private)
 async def media_downloader_router(client, message):
     user_id = message.from_user.id
-    if user_id in db.get("banned_users"): return # لا يرد على المحظورين
+    if user_id in db.get("banned_users"): return
     
     users = db.get("users")
     if user_id not in users:
@@ -281,22 +278,22 @@ async def media_downloader_router(client, message):
     
     try:
         # ==========================================
-        # قسم يوتيوب (Shorts) و تويتر (X)
+        # قسم يوتيوب (Shorts) و تويتر (X) 🚀
         # ==========================================
         if any(domain in url for domain in ["youtube.com", "youtu.be", "twitter.com", "x.com"]):
-            media_list = await asyncio.to_thread(extract_global_media, url)
-            if not media_list: return await processing_msg.edit("❌ فشل استخراج البيانات. الرابط معطوب أو غير متاح.")
+            data = await asyncio.to_thread(download_yt_twitter, url)
+            if not data: 
+                return await processing_msg.edit("❌ فشل التحميل. الرابط معطوب أو حجم الفيديو يتجاوز 50 ميجابايت.")
             
-            if len(media_list) == 1:
-                media = media_list[0]
-                if media["type"] == "video": await client.send_video(message.chat.id, video=media["url"], caption="🤖 بواسطة البوت", reply_to_message_id=message.id)
-                else: await client.send_photo(message.chat.id, photo=media["url"], caption="🤖 بواسطة البوت", reply_to_message_id=message.id)
-            elif len(media_list) > 1:
-                media_group = []
-                for m in media_list[:10]:
-                    if m["type"] == "video": media_group.append(InputMediaVideo(m["url"]))
-                    else: media_group.append(InputMediaPhoto(m["url"]))
-                await client.send_media_group(message.chat.id, media=media_group, reply_to_message_id=message.id)
+            caption = f"📝 {data['title']}\n\n🤖 بواسطة البوت" if data['title'] else "🤖 بواسطة البوت"
+            try:
+                # نرفع الملف المحمل محلياً لتيليجرام
+                await client.send_video(message.chat.id, video=data['path'], caption=caption, reply_to_message_id=message.id)
+            finally:
+                # 🔴 خطوة مهمة جداً: حذف الملف من السيرفر فوراً حتى لا يمتلئ
+                if os.path.exists(data['path']):
+                    os.remove(data['path'])
+            
             await processing_msg.delete()
 
         # ==========================================
@@ -361,6 +358,6 @@ async def media_downloader_router(client, message):
             await processing_msg.edit(f"⚠️ حدث خطأ تقني: `{str(e)}`")
 
 if __name__ == "__main__":
-    print("🤖 Bot is running with the new Welcome Template...", flush=True)
+    print("🤖 Bot is running with Local YT-DLP engine...", flush=True)
     app.run()
-        
+                        
