@@ -1,6 +1,7 @@
 import asyncio
 import re
 import aiohttp
+import urllib.parse
 from pyrogram import filters, enums
 from pyromod import Client
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, InputMediaVideo
@@ -69,22 +70,53 @@ async def fetch_tiktok_data(url: str) -> dict:
 async def fetch_instagram_data(url: str) -> tuple:
     """
     يقوم بإرجاع: (قائمة الروابط، قائمة الأخطاء للتشخيص)
+    تم تحديث السيرفرات إلى محركات جديدة ونشطة.
     """
     clean_url = url.split("?")[0]
     if not clean_url.endswith("/"):
         clean_url += "/"
         
+    encoded_url = urllib.parse.quote(clean_url)
     media_urls = []
     debug_logs = []
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
-    # المحرك 1: Siputzx (أرسلنا الرابط خام بدون تشفير لأنه يفضل ذلك)
+    # المحرك 1: Cobalt API (الأقوى والأكثر استقراراً)
     try:
+        cobalt_headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Origin": "https://cobalt.tools",
+            "Referer": "https://cobalt.tools/",
+            "User-Agent": headers["User-Agent"]
+        }
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"https://api.siputzx.my.id/api/d/igdl?url={clean_url}", headers=headers, timeout=12) as resp:
+            # استخدام API الخاص بكوبالت (يدعم POST بالـ JSON)
+            async with session.post("https://api.cobalt.tools/api/json", json={"url": clean_url}, headers=cobalt_headers, timeout=12) as resp:
                 if resp.status == 200:
                     res = await resp.json()
-                    if res.get("status") and res.get("data"):
+                    if res.get("status") in ["stream", "redirect"]:
+                        link = res.get("url")
+                        t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
+                        return [{"type": t, "url": link}], debug_logs
+                    elif res.get("status") == "picker":
+                        for item in res.get("picker", []):
+                            link = item.get("url")
+                            t = "photo" if item.get("type") == "photo" else "video"
+                            media_urls.append({"type": t, "url": link})
+                        if media_urls: return media_urls, debug_logs
+                else:
+                    debug_logs.append(f"Cobalt: HTTP {resp.status} - {await resp.text()}")
+    except Exception as e:
+        debug_logs.append(f"Cobalt Failed: {str(e)}")
+
+    # المحرك 2: Nayan API (سيرفر قوي ومستقر)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"https://nayan-video-downloader.vercel.app/nayan/igdl?url={encoded_url}", headers=headers, timeout=12) as resp:
+                if resp.status == 200:
+                    res = await resp.json()
+                    if "data" in res and isinstance(res["data"], list):
                         for item in res["data"]:
                             link = item.get("url")
                             if link:
@@ -92,51 +124,51 @@ async def fetch_instagram_data(url: str) -> tuple:
                                 media_urls.append({"type": t, "url": link})
                         if media_urls: return media_urls, debug_logs
                     else:
-                        debug_logs.append(f"Siputzx: API returned empty data. Response: {res}")
+                        debug_logs.append("Nayan: Empty data returned.")
                 else:
-                    debug_logs.append(f"Siputzx: HTTP {resp.status}")
+                    debug_logs.append(f"Nayan: HTTP {resp.status}")
     except Exception as e:
-        debug_logs.append(f"Siputzx Failed: {str(e)}")
+        debug_logs.append(f"Nayan Failed: {str(e)}")
 
-    # المحرك 2: Ryzendesu
+    # المحرك 3: BK9 API
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"https://api.ryzendesu.vip/api/downloader/igdl?url={clean_url}", headers=headers, timeout=12) as resp:
+            async with session.get(f"https://bk9.fun/download/instagram?url={encoded_url}", headers=headers, timeout=12) as resp:
                 if resp.status == 200:
                     res = await resp.json()
-                    if res.get("data"):
-                        for item in res["data"]:
+                    if res.get("status") and "BK9" in res:
+                        for item in res["BK9"]:
                             link = item.get("url")
                             if link:
                                 t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
                                 media_urls.append({"type": t, "url": link})
                         if media_urls: return media_urls, debug_logs
                     else:
-                        debug_logs.append("Ryzendesu: No data in response.")
+                        debug_logs.append("BK9: No media in response.")
                 else:
-                    debug_logs.append(f"Ryzendesu: HTTP {resp.status}")
+                    debug_logs.append(f"BK9: HTTP {resp.status}")
     except Exception as e:
-        debug_logs.append(f"Ryzendesu Failed: {str(e)}")
-        
-    # المحرك 3: API Vreden (جديد وقوي جداً)
+        debug_logs.append(f"BK9 Failed: {str(e)}")
+
+    # المحرك 4: Nyxs API
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"https://api.vreden.web.id/api/igdownload?url={clean_url}", headers=headers, timeout=12) as resp:
+            async with session.get(f"https://api.nyxs.pw/dl/ig?url={encoded_url}", headers=headers, timeout=12) as resp:
                 if resp.status == 200:
                     res = await resp.json()
-                    if res.get("result") and res["result"].get("url"):
-                        for item in res["result"]["url"]:
+                    if res.get("status") and res.get("result"):
+                        for item in res["result"]:
                             link = item.get("url")
                             if link:
                                 t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
                                 media_urls.append({"type": t, "url": link})
                         if media_urls: return media_urls, debug_logs
                     else:
-                        debug_logs.append("Vreden: Invalid format returned.")
+                        debug_logs.append("Nyxs: Empty data.")
                 else:
-                    debug_logs.append(f"Vreden: HTTP {resp.status}")
+                    debug_logs.append(f"Nyxs: HTTP {resp.status}")
     except Exception as e:
-        debug_logs.append(f"Vreden Failed: {str(e)}")
+        debug_logs.append(f"Nyxs Failed: {str(e)}")
 
     return [], debug_logs
 
@@ -263,7 +295,6 @@ async def media_downloader_router(client, message):
             media_list, debug_logs = await fetch_instagram_data(url)
             
             if not media_list:
-                # هنا الميزة الجديدة: سيتم إرسال سبب الفشل الدقيق لك كصاحب البوت لتعرف المشكلة
                 error_text = "❌ **فشل استخراج البيانات.**\n(قد يكون الحساب خاصاً، أو السيرفرات محظورة مؤقتاً).\n\n"
                 error_text += "🛠️ **سجل تشخيص الأخطاء (للمطور):**\n"
                 for log in debug_logs:
@@ -294,7 +325,7 @@ async def media_downloader_router(client, message):
 
     except Exception as e:
         if "WebpageCurlFailed" in str(e):
-            await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن سيرفرات تيليجرام رفضت رفعه (حجمه كبير أو رابط مقفل للـ IP). جرب رابطاً آخر.")
+            await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن سيرفرات تيليجرام رفضت رفعه (حجمه كبير أو مقفل). جرب رابطاً آخر.")
         else:
             await processing_msg.edit(f"⚠️ حدث خطأ تقني غير متوقع: `{str(e)}`")
 
