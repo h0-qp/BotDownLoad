@@ -47,8 +47,11 @@ async def is_subscribed(client, user_id):
 
 async def fetch_tiktok_data(url: str) -> dict:
     """استخراج بيانات تيك توك عبر API خلفي"""
+    # تنظيف رابط تيك توك أيضاً من أي زيادات
+    clean_url = url.split("?")[0] if "?" in url else url
+    
     api_url = "https://www.tikwm.com/api/"
-    data = {"url": url, "count": 12, "cursor": 0, "web": 1, "hd": 1}
+    data = {"url": clean_url, "count": 12, "cursor": 0, "web": 1, "hd": 1}
     
     def fix_url(link):
         if link and link.startswith("/"):
@@ -78,9 +81,12 @@ async def fetch_tiktok_data(url: str) -> dict:
 
 async def fetch_instagram_data(url: str) -> list:
     """
-    استخراج بيانات إنستجرام باستخدام Cobalt API
-    مع نظام Backup API في حال فشل الأول.
+    استخراج بيانات إنستجرام مع تنظيف الرابط أولاً
+    ويحتوي على 3 محركات (APIs) لضمان عدم الفشل.
     """
+    # 🔴 خطوة مهمة جداً: تنظيف الرابط من رموز التتبع (مثل ?igsh=)
+    clean_url = url.split("?")[0]
+    
     # 1. المحرك الأساسي (Cobalt Tools)
     api_url = "https://api.cobalt.tools/api/json"
     headers = {
@@ -90,7 +96,7 @@ async def fetch_instagram_data(url: str) -> list:
         "Referer": "https://cobalt.tools/",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
-    payload = {"url": url}
+    payload = {"url": clean_url}
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -108,7 +114,7 @@ async def fetch_instagram_data(url: str) -> list:
                             else:
                                 media_urls.append({"type": "video", "url": link})
                             
-                    elif status == "picker": # منشور متعدد الأقسام
+                    elif status == "picker": 
                         for item in result.get("picker", []):
                             link = item.get("url")
                             if item.get("type") == "photo" or any(ext in link.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"]):
@@ -122,11 +128,34 @@ async def fetch_instagram_data(url: str) -> list:
         print(f"Cobalt API Error: {e}")
         pass 
         
-    # 2. المحرك الاحتياطي (Ryzendesu API)
-    backup_url = f"https://api.ryzendesu.vip/api/downloader/igdl?url={url}"
+    # 2. المحرك الاحتياطي الأول (Siputzx API - قوي جداً للريلز)
+    backup_url_1 = f"https://api.siputzx.my.id/api/d/igdl?url={clean_url}"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(backup_url, headers={"User-Agent": "Mozilla/5.0"}) as response:
+            async with session.get(backup_url_1, headers={"User-Agent": "Mozilla/5.0"}) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    media_urls = []
+                    if result.get("status"):
+                        data = result.get("data", [])
+                        for item in data:
+                            link = item.get("url")
+                            if link:
+                                if "jpg" in link.lower() or "webp" in link.lower():
+                                    media_urls.append({"type": "photo", "url": link})
+                                else:
+                                    media_urls.append({"type": "video", "url": link})
+                        if media_urls:
+                            return media_urls
+    except Exception as e:
+        print(f"Siputzx API Error: {e}")
+        pass
+
+    # 3. المحرك الاحتياطي الثاني (Ryzendesu API)
+    backup_url_2 = f"https://api.ryzendesu.vip/api/downloader/igdl?url={clean_url}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(backup_url_2, headers={"User-Agent": "Mozilla/5.0"}) as response:
                 if response.status == 200:
                     result = await response.json()
                     media_urls = []
@@ -142,7 +171,7 @@ async def fetch_instagram_data(url: str) -> list:
                         if media_urls:
                             return media_urls
     except Exception as e:
-        print(f"Backup API Error: {e}")
+        print(f"Ryzendesu API Error: {e}")
         pass
 
     return []
@@ -309,7 +338,7 @@ async def media_downloader_router(client, message):
             await processing_msg.edit("❌ هذا الرابط غير مدعوم حالياً في نظام التحميل.")
 
     except Exception as e:
-        await processing_msg.edit(f"⚠️ حدث خطأ تقني أثناء الإرسال من تيليجرام: `{str(e)}`\n(قد يكون الملف كبيراً جداً أو الرابط محمي).")
+        await processing_msg.edit(f"⚠️ حدث خطأ تقني أثناء الإرسال من تيليجرام: `{str(e)}`\n(قد يكون الملف كبيراً جداً).")
 
 # ------------------------------------------------------------------------
 # نقطة الانطلاق
