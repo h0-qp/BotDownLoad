@@ -1,0 +1,13 @@
+wget
+yt-dlp
+asyncio
+pyrogram
+user-agent
+youtube-search
+tgcrypto
+redis
+uvloop
+pyromod
+python-dotenv
+kvsqlite
+kurigram
