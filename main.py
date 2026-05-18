@@ -50,7 +50,9 @@ async def fetch_tiktok_data(url: str) -> dict:
         return link
 
     try:
-        async with aiohttp.ClientSession() as session:
+        # إلغاء فحص SSL لتجنب أي أخطاء من السيرفرات
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
             async with session.post(api_url, data=data, timeout=15) as response:
                 if response.status == 200:
                     result = await response.json()
@@ -72,13 +74,14 @@ async def fetch_instagram_data(url: str) -> tuple:
     media_urls = []
     debug_logs = []
     
-    # مصفوفة سيرفرات Cobalt المستقلة (تعمل كخطة A, B, C, D, E)
+    # مصفوفة سيرفرات حديثة ونشطة (تعمل כخطة هجوم تسلسلية)
     cobalt_instances = [
-        "https://co.wuk.sh/api/json",
-        "https://cobalt.cst.im/api/json",
-        "https://api.cobalt.zluqe.com/api/json",
-        "https://cobalt.seasi.dev/api/json",
-        "https://cobalt-api.pepegapi.heyturi.com/api/json"
+        "https://co.eepy.today/api/json",
+        "https://dl.oh.no/api/json",
+        "https://cobalt.canine.ly/api/json",
+        "https://cobalt.kwiatekit.com/api/json",
+        "https://api.cobalt.tools/api/json", 
+        "https://api.cobalt.biz.ua/api/json"
     ]
     
     headers = {
@@ -87,12 +90,14 @@ async def fetch_instagram_data(url: str) -> tuple:
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
 
-    # التكرار عبر السيرفرات: إذا فشل واحد، ينتقل للثاني مباشرة
-    async with aiohttp.ClientSession() as session:
+    # 🚀 القطعة السحرية: إلغاء فحص الـ SSL لاختراق السيرفرات المعطوبة
+    connector = aiohttp.TCPConnector(ssl=False)
+
+    async with aiohttp.ClientSession(connector=connector) as session:
         for instance in cobalt_instances:
             instance_name = instance.split("//")[1].split("/")[0]
             try:
-                async with session.post(instance, json={"url": clean_url}, headers=headers, timeout=10) as resp:
+                async with session.post(instance, json={"url": clean_url}, headers=headers, timeout=12) as resp:
                     if resp.status == 200:
                         res = await resp.json()
                         if res.get("status") in ["stream", "redirect"]:
@@ -110,21 +115,21 @@ async def fetch_instagram_data(url: str) -> tuple:
             except Exception as e:
                 debug_logs.append(f"{instance_name} Error: {str(e)}")
 
-        # محرك طوارئ أخير في حال سقوط كل سيرفرات كوبالت
+        # محرك طوارئ إضافي في حال سقوط כל السيرفرات السابقة
         try:
             encoded_url = urllib.parse.quote(clean_url)
-            async with session.get(f"https://api.agatz.my.id/api/instagram?url={encoded_url}", timeout=10) as resp:
+            async with session.get(f"https://api.siputzx.my.id/api/d/igdl?url={encoded_url}", timeout=10) as resp:
                 if resp.status == 200:
                     res = await resp.json()
-                    if res.get("status") == 200 and res.get("data"):
-                        for link in res["data"]:
-                            t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
-                            media_urls.append({"type": t, "url": link})
+                    if res.get("status") and res.get("data"):
+                        for item in res["data"]:
+                            link = item.get("url")
+                            if link:
+                                t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
+                                media_urls.append({"type": t, "url": link})
                         if media_urls: return media_urls, debug_logs
-                else:
-                    debug_logs.append(f"Agatz API: HTTP {resp.status}")
         except Exception as e:
-            debug_logs.append(f"Agatz API Error: {str(e)}")
+            debug_logs.append(f"Siputzx Error: {str(e)}")
 
     return [], debug_logs
 
@@ -254,7 +259,7 @@ async def media_downloader_router(client, message):
 
     except Exception as e:
         if "WebpageCurlFailed" in str(e):
-            await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن تيليجرام رفض رفعه. جرب رابطاً آخر.")
+            await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن تيليجرام رفض رفعه (حجمه كبير). جرب رابطاً آخر.")
         else:
             await processing_msg.edit(f"⚠️ حدث خطأ تقني: `{str(e)}`")
 
