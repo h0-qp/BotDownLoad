@@ -50,7 +50,6 @@ async def fetch_tiktok_data(url: str) -> dict:
         return link
 
     try:
-        # إلغاء فحص SSL لتجنب أي أخطاء من السيرفرات
         connector = aiohttp.TCPConnector(ssl=False)
         async with aiohttp.ClientSession(connector=connector) as session:
             async with session.post(api_url, data=data, timeout=15) as response:
@@ -71,68 +70,71 @@ async def fetch_instagram_data(url: str) -> tuple:
     if not clean_url.endswith("/"):
         clean_url += "/"
         
+    encoded_url = urllib.parse.quote(clean_url)
     media_urls = []
     debug_logs = []
     
-    # مصفوفة سيرفرات حديثة ونشطة (تعمل כخطة هجوم تسلسلية)
-    cobalt_instances = [
-        "https://co.eepy.today/api/json",
-        "https://dl.oh.no/api/json",
-        "https://cobalt.canine.ly/api/json",
-        "https://cobalt.kwiatekit.com/api/json",
-        "https://api.cobalt.tools/api/json", 
-        "https://api.cobalt.biz.ua/api/json"
+    # قائمتك الجديدة: 6 مواقع مختلفة وبديلة كلياً يتم تجربتها بالترتيب
+    apis = [
+        ("Widipe", f"https://widipe.com/download/igdl?url={encoded_url}"),
+        ("Siputzx", f"https://api.siputzx.my.id/api/d/igdl?url={encoded_url}"),
+        ("AEMT", f"https://aemt.me/download/igdl?url={encoded_url}"),
+        ("Agatz", f"https://api.agatz.my.id/api/instagram?url={encoded_url}"),
+        ("Vreden", f"https://api.vreden.web.id/api/igdownload?url={encoded_url}"),
+        ("Nayan", f"https://nayan-video-downloader.vercel.app/nayan/igdl?url={encoded_url}")
     ]
     
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-
-    # 🚀 القطعة السحرية: إلغاء فحص الـ SSL لاختراق السيرفرات المعطوبة
-    connector = aiohttp.TCPConnector(ssl=False)
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    connector = aiohttp.TCPConnector(ssl=False) # لتخطي أخطاء الحماية
 
     async with aiohttp.ClientSession(connector=connector) as session:
-        for instance in cobalt_instances:
-            instance_name = instance.split("//")[1].split("/")[0]
+        for name, api_url in apis:
             try:
-                async with session.post(instance, json={"url": clean_url}, headers=headers, timeout=12) as resp:
+                async with session.get(api_url, headers=headers, timeout=12) as resp:
                     if resp.status == 200:
-                        res = await resp.json()
-                        if res.get("status") in ["stream", "redirect"]:
-                            link = res.get("url")
-                            t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
-                            return [{"type": t, "url": link}], debug_logs
-                        elif res.get("status") == "picker":
-                            for item in res.get("picker", []):
-                                link = item.get("url")
-                                t = "photo" if item.get("type") == "photo" else "video"
-                                media_urls.append({"type": t, "url": link})
-                            if media_urls: return media_urls, debug_logs
-                    else:
-                        debug_logs.append(f"{instance_name}: HTTP {resp.status}")
-            except Exception as e:
-                debug_logs.append(f"{instance_name} Error: {str(e)}")
+                        try:
+                            res = await resp.json()
+                        except:
+                            debug_logs.append(f"{name}: Failed to parse JSON")
+                            continue
 
-        # محرك طوارئ إضافي في حال سقوط כל السيرفرات السابقة
-        try:
-            encoded_url = urllib.parse.quote(clean_url)
-            async with session.get(f"https://api.siputzx.my.id/api/d/igdl?url={encoded_url}", timeout=10) as resp:
-                if resp.status == 200:
-                    res = await resp.json()
-                    if res.get("status") and res.get("data"):
-                        for item in res["data"]:
-                            link = item.get("url")
-                            if link:
-                                t = "photo" if ".jpg" in link.lower() or ".webp" in link.lower() else "video"
+                        extracted_links = []
+                        # المستخرج الذكي: يبحث عن البيانات مهما كان اسم المصفوفة (data أو result)
+                        data_source = res.get("data") or res.get("result") or res
+                        
+                        if isinstance(data_source, list):
+                            for item in data_source:
+                                if isinstance(item, dict) and item.get("url"):
+                                    extracted_links.append(item.get("url"))
+                                elif isinstance(item, str) and item.startswith("http"):
+                                    extracted_links.append(item)
+                        elif isinstance(data_source, dict):
+                            if "url" in data_source:
+                                if isinstance(data_source["url"], list):
+                                    for item in data_source["url"]:
+                                        if isinstance(item, dict) and item.get("url"):
+                                            extracted_links.append(item.get("url"))
+                                        elif isinstance(item, str):
+                                            extracted_links.append(item)
+                                elif isinstance(data_source["url"], str):
+                                    extracted_links.append(data_source["url"])
+                        
+                        # فرز الروابط المستخرجة وتجهيزها للإرسال
+                        for link in extracted_links:
+                            if link and link.startswith("http"):
+                                t = "photo" if any(ext in link.lower() for ext in [".jpg", ".jpeg", ".webp", ".png"]) else "video"
                                 media_urls.append({"type": t, "url": link})
-                        if media_urls: return media_urls, debug_logs
-        except Exception as e:
-            debug_logs.append(f"Siputzx Error: {str(e)}")
+                                
+                        if media_urls:
+                            return media_urls, debug_logs
+                        else:
+                            debug_logs.append(f"{name}: No valid media links found")
+                    else:
+                        debug_logs.append(f"{name}: HTTP {resp.status}")
+            except Exception as e:
+                debug_logs.append(f"{name} Error: {str(e)}")
 
     return [], debug_logs
-
 
 # ------------------------------------------------------------------------
 # معالجات الأوامر واللوحة
@@ -259,7 +261,7 @@ async def media_downloader_router(client, message):
 
     except Exception as e:
         if "WebpageCurlFailed" in str(e):
-            await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن تيليجرام رفض رفعه (حجمه كبير). جرب رابطاً آخر.")
+            await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن تيليجرام رفض رفعه (لأن السيرفر حظر IP تيليجرام أو الحجم كبير). جرب رابطاً آخر.")
         else:
             await processing_msg.edit(f"⚠️ حدث خطأ تقني: `{str(e)}`")
 
