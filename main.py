@@ -1,6 +1,6 @@
 import asyncio
 import aiohttp
-import yt_dlp
+import urllib.parse
 from pyrogram import filters, enums
 from pyromod import Client
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto, InputMediaVideo
@@ -64,45 +64,63 @@ async def fetch_tiktok_data(url: str) -> dict:
         print(f"TikTok API Error: {e}", flush=True)
     return None
 
-
-# 🚀 دالة إنستجرام الجديدة باستخدام yt-dlp للاعتماد على الذات 100%
-def extract_instagram_ytdlp(url: str) -> tuple:
+async def fetch_instagram_data(url: str) -> tuple:
     clean_url = url.split("?")[0]
+    if not clean_url.endswith("/"):
+        clean_url += "/"
+        
+    encoded_url = urllib.parse.quote(clean_url)
     media_urls = []
     debug_logs = []
     
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'skip_download': True, # لا نحمل الملف للسيرفر، نستخرج الرابط فقط
-        'extract_flat': False
-    }
+    # المحركات الحديثة والقوية لعام 2026 (لا تتأثر بحظر الاستضافات)
+    apis = [
+        ("Subshady API", f"https://api.subshady.com/api/instagram?url={encoded_url}"),
+        ("Anya DL", f"https://api.anya.biz/download/instagram?url={encoded_url}"),
+        ("Siputzx Pro", f"https://api.siputzx.my.id/api/d/igdl?url={encoded_url}")
+    ]
     
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(clean_url, download=False)
-            
-            # إذا كان المنشور عبارة عن "ألبوم" (عدة صور أو فيديوهات)
-            if 'entries' in info:
-                for entry in info['entries']:
-                    link = entry.get('url')
-                    if link:
-                        ext = entry.get('ext', '')
-                        t = "photo" if ext in ['jpg', 'webp', 'png'] or '.jpg' in link.lower() else "video"
-                        media_urls.append({"type": t, "url": link})
-            # إذا كان المنشور مفرداً (ريلز واحد أو صورة واحدة)
-            else:
-                link = info.get('url')
-                if link:
-                    ext = info.get('ext', '')
-                    t = "photo" if ext in ['jpg', 'webp', 'png'] or '.jpg' in link.lower() else "video"
-                    media_urls.append({"type": t, "url": link})
-                    
-    except Exception as e:
-        debug_logs.append(f"yt-dlp Error: {str(e)}")
-        
-    return media_urls, debug_logs
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    connector = aiohttp.TCPConnector(ssl=False)
 
+    async with aiohttp.ClientSession(connector=connector) as session:
+        for name, api_url in apis:
+            try:
+                async with session.get(api_url, headers=headers, timeout=15) as resp:
+                    if resp.status == 200:
+                        res = await resp.json()
+                        
+                        # استخراج الروابط بذكاء حسب بنية الـ API التابع للموقع
+                        extracted_links = []
+                        data_source = res.get("data") or res.get("result") or res.get("urls") or res
+                        
+                        if isinstance(data_source, list):
+                            for item in data_source:
+                                if isinstance(item, dict) and item.get("url"):
+                                    extracted_links.append(item.get("url"))
+                                elif isinstance(item, str) and item.startswith("http"):
+                                    extracted_links.append(item)
+                        elif isinstance(data_source, dict):
+                            if "url" in data_source:
+                                extracted_links.append(data_source["url"])
+                            elif "download" in data_source:
+                                extracted_links.append(data_source["download"])
+                        
+                        for link in extracted_links:
+                            if isinstance(link, str) and link.startswith("http"):
+                                t = "photo" if any(ext in link.lower() for ext in [".jpg", ".jpeg", ".webp", ".png"]) else "video"
+                                media_urls.append({"type": t, "url": link})
+                                
+                        if media_urls:
+                            return media_urls, debug_logs
+                        else:
+                            debug_logs.append(f"{name}: No media array found in JSON")
+                    else:
+                        debug_logs.append(f"{name}: HTTP {resp.status}")
+            except Exception as e:
+                debug_logs.append(f"{name} Error: {str(e)}")
+
+    return [], debug_logs
 
 # ------------------------------------------------------------------------
 # معالجات الأوامر واللوحة
@@ -187,7 +205,7 @@ async def media_downloader_router(client, message):
         return
 
     url = message.text.strip()
-    processing_msg = await message.reply("⏳ **جاري المعالجة والتحميل...**", quote=True)
+    processing_msg = await message.reply("⏳ **جاري التحميل المعزز...**", quote=True)
     
     try:
         if "tiktok.com" in url:
@@ -203,8 +221,7 @@ async def media_downloader_router(client, message):
             await processing_msg.delete()
 
         elif "instagram.com" in url:
-            # تشغيل الدالة في مسار خلفي (Thread) حتى لا تتجمد بقية مهام البوت
-            media_list, debug_logs = await asyncio.to_thread(extract_instagram_ytdlp, url)
+            media_list, debug_logs = await fetch_instagram_data(url)
             
             if not media_list:
                 error_text = "❌ **فشل استخراج البيانات.**\n"
@@ -229,7 +246,7 @@ async def media_downloader_router(client, message):
 
     except Exception as e:
         if "WebpageCurlFailed" in str(e):
-            await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن تيليجرام رفض رفعه (بسبب حجمه الكبير أو حماية IP). جرب رابطاً آخر.")
+            await processing_msg.edit("⚠️ تم جلب الرابط بنجاح، لكن تيليجرام رفض رفعه. جرب رابطاً آخر.")
         else:
             await processing_msg.edit(f"⚠️ حدث خطأ تقني: `{str(e)}`")
 
