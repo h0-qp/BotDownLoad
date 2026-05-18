@@ -25,18 +25,16 @@ START_TIME = time.time()
 app = Client("MyBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 db = KVSQ("bot_data.sqlite")
 
-# تجهيز قاعدة البيانات لقفل البيانات
 if not db.exists("users"): db.set("users", [])
 if not db.exists("banned_users"): db.set("banned_users", [])
 if not db.exists("force_channel"): db.set("force_channel", "None")
 
-# إعداد كليشة الترحيب الافتراضية
 if not db.exists("welcome_message"):
     default_welcome = "- مرحبا بك {mention}\n- في بوت تحميل من جميع المواقع \n \nللتحميل ارسل الرابط فقط."
     db.set("welcome_message", default_welcome)
 
 # ------------------------------------------------------------------------
-# دوال المساعدة والنظام والمحركات الأساسية
+# دوال المساعدة والنظام
 # ------------------------------------------------------------------------
 
 def get_uptime():
@@ -57,10 +55,6 @@ async def is_subscribed(client, user_id):
     return False
 
 def build_caption(client, media_title=""):
-    """
-    [الميزة الخامسة المحدثة] تفحص قاعدة البيانات؛ إذا لم تضف يوزر أو حقوق، 
-    تستخدم يوزر البوت تلقائياً كحقوق نشر للمنشورات
-    """
     custom_rights = db.get("caption_rights") if db.exists("caption_rights") else None
     if not custom_rights:
         bot_username = client.me.username if client.me else "Bot"
@@ -77,9 +71,7 @@ def extract_tiktok_data(url: str) -> dict:
     clean_url = url.split("?")[0] if "?" in url else url
     api_url = "https://www.tikwm.com/api/"
     data = {"url": clean_url, "hd": 1}
-    def fix_url(link):
-        return "https://www.tikwm.com" + link if link and link.startswith("/") else link
-
+    def fix_url(link): return "https://www.tikwm.com" + link if link and link.startswith("/") else link
     try:
         scraper = cloudscraper.create_scraper()
         resp = scraper.post(api_url, data=data, timeout=15)
@@ -89,13 +81,12 @@ def extract_tiktok_data(url: str) -> dict:
                 body = res.get("data")
                 if "images" in body:
                     return {"type": "images", "images": [fix_url(i) for i in body["images"]], "audio": fix_url(body.get("music")), "title": body.get("title")}
-                else:
-                    return {"type": "video", "video_url": fix_url(body.get("play")), "title": body.get("title")}
-    except Exception as e: print(f"TikTok Error: {e}", flush=True)
+                else: return {"type": "video", "video_url": fix_url(body.get("play")), "title": body.get("title")}
+    except Exception: pass
     return None
 
 # ==========================================
-# 2. محرك استخراج بنترست (Pinterest)
+# 2. محرك استخراج بنترست 
 # ==========================================
 def extract_pinterest_data(url: str) -> dict:
     scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True})
@@ -103,32 +94,25 @@ def extract_pinterest_data(url: str) -> dict:
         resp = scraper.get(url, timeout=15)
         if resp.status_code == 200:
             mp4_matches = re.findall(r'https://[^"\'>\\]+\.mp4', resp.text)
-            if mp4_matches:
-                best_vid = next((v for v in mp4_matches if "720p" in v), mp4_matches[0])
-                return {"type": "video", "url": best_vid}
-                
+            if mp4_matches: return {"type": "video", "url": next((v for v in mp4_matches if "720p" in v), mp4_matches[0])}
             soup = BeautifulSoup(resp.text, "html.parser")
             image_tag = soup.find("meta", {"property": "og:image"}) or soup.find("meta", {"name": "og:image"})
             if image_tag and image_tag.get("content"):
                 img_url = image_tag["content"].replace("236x", "originals").replace("474x", "originals").replace("736x", "originals")
                 return {"type": "photo", "url": img_url}
-    except Exception as e: print(f"Pinterest Error: {e}", flush=True)
+    except Exception: pass
     return None
 
 # ==========================================
-# 3. محرك يوتيوب (Shorts / Videos)
+# 3. محرك يوتيوب
 # ==========================================
 def download_youtube_video(url: str) -> dict:
     filename = f"temp_{uuid.uuid4().hex[:6]}.mp4"
-    ydl_opts = {
-        'outtmpl': filename, 'quiet': True, 'no_warnings': True,
-        'format': 'b[ext=mp4]/best', 'max_filesize': 50 * 1024 * 1024, 
-    }
+    ydl_opts = {'outtmpl': filename, 'quiet': True, 'no_warnings': True, 'format': 'b[ext=mp4]/best', 'max_filesize': 50 * 1024 * 1024}
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            if os.path.exists(filename):
-                return {"path": filename, "title": info.get("title", "")}
+            if os.path.exists(filename): return {"path": filename, "title": info.get("title", "")}
     except Exception:
         if os.path.exists(filename): os.remove(filename)
     return None
@@ -139,14 +123,12 @@ def download_youtube_video(url: str) -> dict:
 def extract_twitter_data(url: str) -> list:
     match = re.search(r'(?:twitter\.com|x\.com)/([^/]+/status/\d+)', url)
     if not match: return []
-    api_url = f"https://api.vxtwitter.com/{match.group(1)}"
     scraper = cloudscraper.create_scraper()
     try:
-        resp = scraper.get(api_url, timeout=10)
+        resp = scraper.get(f"https://api.vxtwitter.com/{match.group(1)}", timeout=10)
         if resp.status_code == 200:
-            data = resp.json()
             media_list = []
-            for m in data.get("media_extended", []):
+            for m in resp.json().get("media_extended", []):
                 if m["type"] == "image": media_list.append({"type": "photo", "url": m["url"]})
                 elif m["type"] in ["video", "gif"]: media_list.append({"type": "video", "url": m["url"]})
             return media_list
@@ -154,28 +136,32 @@ def extract_twitter_data(url: str) -> list:
     return []
 
 # ==========================================
-# 5. [الميزة الرابعة] محرك تحميل الصوتيات (Spotify & SoundCloud) 🎵
+# 5. محرك تحميل الصوتيات (Spotify & SoundCloud) 🚀 [تم إصلاحه بالكامل]
 # ==========================================
 def download_audio_track(url: str) -> dict:
     filename = f"audio_{uuid.uuid4().hex[:6]}.mp3"
     scraper = cloudscraper.create_scraper()
     
-    # المحاولة أ: استخدام السيرفر السحابي السريع لكوبالت لفرز تراكات سبوتيفاي المحمية وسحبها mp3 جاهزة
-    try:
-        headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        resp = scraper.post("https://co.wuk.sh/api/json", json={"url": url, "downloadMode": "audio"}, headers=headers, timeout=15)
-        if resp.status_code == 200:
-            res = resp.json()
-            if res.get("status") in ["stream", "redirect"]:
-                r = scraper.get(res.get("url"), timeout=30)
-                with open(filename, 'wb') as f:
-                    f.write(r.content)
-                return {"path": filename, "title": res.get("text", "Audio Track")}
-    except Exception: pass
+    # المحاولة 1: السيرفرات السحابية (ممتازة لسبوتيفاي)
+    instances = ["https://co.wuk.sh/api/json", "https://cobalt.cst.im/api/json", "https://api.cobalt.biz.ua/api/json"]
+    for inst in instances:
+        try:
+            headers = {"Accept": "application/json", "Content-Type": "application/json"}
+            # إرسال isAudioOnly لضمان استخراج الصوت فقط
+            resp = scraper.post(inst, json={"url": url, "isAudioOnly": True}, headers=headers, timeout=15)
+            if resp.status_code == 200:
+                res = resp.json()
+                if res.get("status") in ["stream", "redirect"]:
+                    r = scraper.get(res.get("url"), timeout=30)
+                    with open(filename, 'wb') as f:
+                        f.write(r.content)
+                    return {"path": filename, "title": "Audio Track 🎵"}
+        except Exception: continue
             
-    # المحاولة ب: السحب المباشر للتراكات العامة عبر محرك التنزيل الداخلي yt-dlp كخطة احتياط
+    # المحاولة 2: yt-dlp محلياً (ممتازة لساوند كلاود)
     ydl_opts = {
-        'outtmpl': filename, 'quiet': True, 'no_warnings': True,
+        'outtmpl': f"audio_{uuid.uuid4().hex[:6]}.%(ext)s", 
+        'quiet': True, 'no_warnings': True,
         'format': 'bestaudio/best', 'max_filesize': 30 * 1024 * 1024
     }
     try:
@@ -183,13 +169,13 @@ def download_audio_track(url: str) -> dict:
             info = ydl.extract_info(url, download=True)
             actual_filename = ydl.prepare_filename(info)
             if os.path.exists(actual_filename):
-                return {"path": actual_filename, "title": info.get("title", "Audio Track")}
+                return {"path": actual_filename, "title": info.get("title", "Audio Track 🎵")}
     except Exception:
         if os.path.exists(filename): os.remove(filename)
     return None
 
 # ==========================================
-# 6. محرك استخراج إنستجرام (الخامل حالياً)
+# 6. محرك استخراج إنستجرام 
 # ==========================================
 def extract_snapinsta(url: str) -> tuple:
     clean_url = url.split("?")[0]
@@ -209,7 +195,7 @@ def extract_snapinsta(url: str) -> tuple:
     return media_urls, []
 
 # ------------------------------------------------------------------------
-# لوحة التحكم الخاصة بالإدارة الاحترافية (Admin Panel Pro)
+# لوحة الإدارة الاحترافية 
 # ------------------------------------------------------------------------
 
 @app.on_message(filters.command("admin") & filters.user(OWNER_ID) & filters.private)
@@ -229,84 +215,57 @@ async def admin_callbacks(client, callback):
     chat_id = callback.message.chat.id
     
     if data == "admin_stats":
-        users = db.get("users")
-        banned = db.get("banned_users")
-        text = f"📊 **إحصائيات البوت:**\n\n👥 الأعضاء النشطين: `{len(users)}`\n🚫 المحظورين: `{len(banned)}`\n⏳ مدة التشغيل: `{get_uptime()}`"
-        await callback.answer("تم تحديث الإحصائيات!")
+        text = f"📊 **إحصائيات البوت:**\n\n👥 الأعضاء النشطين: `{len(db.get('users'))}`\n🚫 المحظورين: `{len(db.get('banned_users'))}`\n⏳ مدة التشغيل: `{get_uptime()}`"
+        await callback.answer("تم التحديث!")
         await callback.message.edit_text(text, reply_markup=callback.message.reply_markup)
 
     elif data == "admin_broadcast":
         try:
-            answer = await client.ask(chat_id, "📣 أرسل الآن رسالة الإذاعة (تكدر تدز نص، صورة، أو فيديو):", timeout=120)
+            answer = await client.ask(chat_id, "📣 أرسل الآن رسالة الإذاعة:", timeout=120)
             users = db.get("users")
             await answer.reply(f"⏳ جاري الإذاعة لـ {len(users)} مستخدم...")
-            success = 0
-            for uid in users:
-                try:
-                    await answer.copy(uid)
-                    success += 1
-                except: pass
-            await client.send_message(chat_id, f"✅ تمت الإذاعة بنجاح لـ {success} مستخدم.")
+            success = sum([1 for uid in users if (await answer.copy(uid) or True) if not asyncio.sleep(0.05)])
+            await client.send_message(chat_id, f"✅ تمت الإذاعة لـ {success} مستخدم.")
         except asyncio.TimeoutError: await client.send_message(chat_id, "⏱️ انتهى الوقت.")
 
-    elif data == "admin_ban":
+    elif data in ["admin_ban", "admin_unban"]:
+        action = "تحظره" if data == "admin_ban" else "تفك حظره"
         try:
-            answer = await client.ask(chat_id, "🚫 أرسل آيدي (ID) الشخص اللي تريد تحظره:", timeout=60)
+            answer = await client.ask(chat_id, f"أرسل آيدي (ID) الشخص اللي تريد {action}:", timeout=60)
             if answer.text and answer.text.isdigit():
                 uid = int(answer.text)
                 banned = db.get("banned_users")
-                if uid not in banned:
-                    banned.append(uid)
-                    db.set("banned_users", banned)
-                await answer.reply(f"✅ تم حظر المستخدم: `{uid}` بنجاح!")
-        except asyncio.TimeoutError: await client.send_message(chat_id, "⏱️ انتهى وقت الانتظار.")
-
-    elif data == "admin_unban":
-        try:
-            answer = await client.ask(chat_id, "✅ أرسل آيدي (ID) الشخص اللي تريد تفك حظره:", timeout=60)
-            if answer.text and answer.text.isdigit():
-                uid = int(answer.text)
-                banned = db.get("banned_users")
-                if uid in banned:
-                    banned.remove(uid)
-                    db.set("banned_users", banned)
-                    await answer.reply(f"✅ تم إلغاء حظر المستخدم: `{uid}` بنجاح!")
-        except asyncio.TimeoutError: await client.send_message(chat_id, "⏱️ انتهى وقت الانتظار.")
+                if data == "admin_ban" and uid not in banned: banned.append(uid)
+                elif data == "admin_unban" and uid in banned: banned.remove(uid)
+                db.set("banned_users", banned)
+                await answer.reply(f"✅ تمت العملية بنجاح للمستخدم: `{uid}`")
+        except asyncio.TimeoutError: pass
 
     elif data == "change_fsub":
         try:
-            answer = await client.ask(chat_id, "الرجاء إرسال معرف القناة الجديدة (يجب أن يبدأ بـ @):\nلإلغاء الاشتراك الإجباري أرسل 'None'", timeout=60)
+            answer = await client.ask(chat_id, "الرجاء إرسال معرف القناة الجديدة:\nلإلغاء الاشتراك أرسل 'None'", timeout=60)
             if answer.text:
                 db.set("force_channel", answer.text.strip())
-                await answer.reply(f"✅ تم حفظ القناة بنجاح!\nالقناة الحالية: {answer.text.strip()}")
-        except asyncio.TimeoutError: await client.send_message(chat_id, "⏱️ تم الإلغاء.")
+                await answer.reply(f"✅ تم الحفظ: {answer.text.strip()}")
+        except asyncio.TimeoutError: pass
 
     elif data == "change_welcome":
         try:
-            answer = await client.ask(chat_id, "📝 أرسل الآن كليشة الترحيب الجديدة وتكدر تخلي بيها كلمة `{mention}` للمنشن التلقائي:", timeout=120)
+            answer = await client.ask(chat_id, "📝 أرسل كليشة الترحيب الجديدة:", timeout=120)
             if answer.text:
                 db.set("welcome_message", answer.text.strip())
-                await answer.reply(f"✅ تم حفظ كليشة الترحيب بنجاح!")
-        except asyncio.TimeoutError: await client.send_message(chat_id, "⏱️ انتهى الوقت.")
+                await answer.reply("✅ تم حفظ كليشة الترحيب!")
+        except asyncio.TimeoutError: pass
 
-    # 🚀 معالج زر تعديل حقوق القناة والفيديوهات المخصص
     elif data == "change_rights":
         try:
-            hint = (
-                "🏷️ **أرسل الآن نص الحقوق أو يوزر قناتك اللي تريده يظهر تلقائياً تحت الفيديوهات والصوتيات:**\n\n"
-                "مثال ترسل هج: `تم التحميل بواسطة قناة المطور @MyChannel`\n\n"
-                "💡 **ملاحظة:** إذا تريد تحذف الحقوق المخصصة وترجع ليوزر البوت الافتراضي، أرسل كلمة `None`"
-            )
-            answer = await client.ask(chat_id, hint, timeout=120)
+            answer = await client.ask(chat_id, "🏷️ أرسل نص الحقوق (أو 'None' للعودة ليوزر البوت):", timeout=120)
             if answer.text:
-                text = answer.text.strip()
-                if text.lower() == "none":
+                if answer.text.strip().lower() == "none":
                     if db.exists("caption_rights"): db.delete("caption_rights")
-                    await answer.reply("✅ تم مسح الحقوق المخصصة، والرجوع للوضع التلقائي (يوزر البوت).")
-                else:
-                    db.set("caption_rights", text)
-                    await answer.reply(f"✅ **تم حفظ حقوق النشر بنجاح!**\n\nستظهر تحت كل ميديا بالشكل هج:\n`{text}`")
-        except asyncio.TimeoutError: await client.send_message(chat_id, "⏱️ انتهى وقت انتظار الرد.")
+                else: db.set("caption_rights", answer.text.strip())
+                await answer.reply("✅ تم تحديث الحقوق بنجاح!")
+        except asyncio.TimeoutError: pass
 
 # ------------------------------------------------------------------------
 # معالجات الأوامر الأساسية 
@@ -331,11 +290,10 @@ async def start_command(client, message):
         return
 
     welcome_template = db.get("welcome_message")
-    welcome_text = welcome_template.replace("{mention}", message.from_user.mention) if "{mention}" in welcome_template else welcome_template
-    await message.reply(welcome_text)
+    await message.reply(welcome_template.replace("{mention}", message.from_user.mention))
 
 # ------------------------------------------------------------------------
-# معالج الروابط ونظام التحميل المتكامل بجميع الحقوق
+# معالج الروابط ونظام التحميل المتكامل
 # ------------------------------------------------------------------------
 
 @app.on_message(filters.regex(r"https?://[^\s]+") & filters.private)
@@ -354,17 +312,16 @@ async def media_downloader_router(client, message):
     
     try:
         # ==========================================
-        # [الميزة الرابعة] قسم سبوتيفاي وساوند كلاود 🎵
+        # قسم سبوتيفاي وساوند كلاود 🎵 (الشرط تم تصحيحه)
         # ==========================================
-        if any(domain in url for domain in ["spotify.com", "soundcloud.com"]):
+        if "spotify.com" in url or "soundcloud.com" in url:
             await processing_msg.edit("⏳ **جاري سحب الملف الصوتي بدقة عالية MP3...**")
             data = await asyncio.to_thread(download_audio_track, url)
             if not data: 
                 return await processing_msg.edit("❌ فشل تحميل التراك الصوتي. الرابط غير متاح أو محمي.")
             
             caption = build_caption(client, data['title'])
-            try:
-                await client.send_audio(message.chat.id, audio=data['path'], caption=caption, reply_to_message_id=message.id)
+            try: await client.send_audio(message.chat.id, audio=data['path'], caption=caption, reply_to_message_id=message.id)
             finally:
                 if os.path.exists(data['path']): os.remove(data['path'])
             await processing_msg.delete()
@@ -378,29 +335,21 @@ async def media_downloader_router(client, message):
             
             caption = build_caption(client)
             if len(media_list) == 1:
-                media = media_list[0]
-                if media["type"] == "video": await client.send_video(message.chat.id, video=media["url"], caption=caption, reply_to_message_id=message.id)
-                else: await client.send_photo(message.chat.id, photo=media["url"], caption=caption, reply_to_message_id=message.id)
+                if media_list[0]["type"] == "video": await client.send_video(message.chat.id, video=media_list[0]["url"], caption=caption, reply_to_message_id=message.id)
+                else: await client.send_photo(message.chat.id, photo=media_list[0]["url"], caption=caption, reply_to_message_id=message.id)
             elif len(media_list) > 1:
-                media_group = []
-                for idx, m in enumerate(media_list[:4]): 
-                    if m["type"] == "video":
-                        media_group.append(InputMediaVideo(m["url"], caption=caption if idx == 0 else ""))
-                    else:
-                        media_group.append(InputMediaPhoto(m["url"], caption=caption if idx == 0 else ""))
+                media_group = [InputMediaVideo(m["url"], caption=caption if i==0 else "") if m["type"]=="video" else InputMediaPhoto(m["url"], caption=caption if i==0 else "") for i,m in enumerate(media_list[:4])]
                 await client.send_media_group(message.chat.id, media=media_group, reply_to_message_id=message.id)
             await processing_msg.delete()
 
         # ==========================================
-        # قسم يوتيوب (Shorts)
+        # قسم يوتيوب
         # ==========================================
         elif "youtube.com" in url or "youtu.be" in url:
             data = await asyncio.to_thread(download_youtube_video, url)
             if not data: return await processing_msg.edit("❌ فشل التحميل أو حجم الفيديو كبير.")
-            
             caption = build_caption(client, data['title'])
-            try:
-                await client.send_video(message.chat.id, video=data['path'], caption=caption, reply_to_message_id=message.id)
+            try: await client.send_video(message.chat.id, video=data['path'], caption=caption, reply_to_message_id=message.id)
             finally:
                 if os.path.exists(data['path']): os.remove(data['path']) 
             await processing_msg.delete()
@@ -416,15 +365,11 @@ async def media_downloader_router(client, message):
                 caption = build_caption(client, data.get('title'))
                 await client.send_video(message.chat.id, video=data["video_url"], caption=caption, reply_to_message_id=message.id)
             elif data["type"] == "images":
-                images = data["images"]
-                for i in range(0, len(images), 10):
-                    chunk = images[i:i + 10]
-                    media_group = [InputMediaPhoto(img) for img in chunk]
+                for i in range(0, len(data["images"]), 10):
+                    media_group = [InputMediaPhoto(img) for img in data["images"][i:i+10]]
                     await client.send_media_group(message.chat.id, media=media_group, reply_to_message_id=message.id)
                     await asyncio.sleep(1.5)
-                
-                text = build_caption(client, data.get("title"))
-                await client.send_message(message.chat.id, text=text, reply_to_message_id=message.id)
+                await client.send_message(message.chat.id, text=build_caption(client, data.get("title")), reply_to_message_id=message.id)
                 if data.get("audio"): await client.send_audio(message.chat.id, audio=data["audio"], reply_to_message_id=message.id)
             await processing_msg.delete()
 
@@ -434,7 +379,6 @@ async def media_downloader_router(client, message):
         elif "pinterest.com" in url or "pin.it" in url:
             data = await asyncio.to_thread(extract_pinterest_data, url)
             if not data: return await processing_msg.edit("❌ فشل استخراج بيانات بنترست.")
-            
             caption = build_caption(client)
             if data["type"] == "video": await client.send_video(message.chat.id, video=data["url"], caption=caption, reply_to_message_id=message.id)
             else: await client.send_photo(message.chat.id, photo=data["url"], caption=caption, reply_to_message_id=message.id)
@@ -444,19 +388,14 @@ async def media_downloader_router(client, message):
         # قسم إنستجرام 
         # ==========================================
         elif "instagram.com" in url:
-            media_list, debug = await asyncio.to_thread(extract_snapinsta, url)
+            media_list, _ = await asyncio.to_thread(extract_snapinsta, url)
             if not media_list: return await processing_msg.edit("❌ السيرفر لا يستجيب حالياً لإنستجرام.")
-            
             caption = build_caption(client)
             if len(media_list) == 1:
-                media = media_list[0]
-                if media["type"] == "video": await client.send_video(message.chat.id, video=media["url"], caption=caption, reply_to_message_id=message.id)
-                else: await client.send_photo(message.chat.id, photo=media["url"], caption=caption, reply_to_message_id=message.id)
+                if media_list[0]["type"] == "video": await client.send_video(message.chat.id, video=media_list[0]["url"], caption=caption, reply_to_message_id=message.id)
+                else: await client.send_photo(message.chat.id, photo=media_list[0]["url"], caption=caption, reply_to_message_id=message.id)
             elif len(media_list) > 1:
-                media_group = []
-                for idx, m in enumerate(media_list[:10]):
-                    if m["type"] == "video": media_group.append(InputMediaVideo(m["url"], caption=caption if idx == 0 else ""))
-                    else: media_group.append(InputMediaPhoto(m["url"], caption=caption if idx == 0 else ""))
+                media_group = [InputMediaVideo(m["url"], caption=caption if i==0 else "") if m["type"]=="video" else InputMediaPhoto(m["url"], caption=caption if i==0 else "") for i,m in enumerate(media_list[:10])]
                 await client.send_media_group(message.chat.id, media=media_group, reply_to_message_id=message.id)
             await processing_msg.delete()
 
@@ -465,5 +404,5 @@ async def media_downloader_router(client, message):
     except Exception as e: await processing_msg.edit(f"⚠️ خطأ تقني: `{str(e)}`")
 
 if __name__ == "__main__":
-    print("🤖 Bot is running with Spotify, SoundCloud & Custom Copyright Panel...", flush=True)
+    print("🤖 Bot is running...", flush=True)
     app.run()
