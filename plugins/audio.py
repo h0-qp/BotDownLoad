@@ -6,7 +6,7 @@ from uuid import uuid4
 import config
 from utils import check_subscription, run_sync, download_file
 from sqldb import db
-from api import soundcloud, spotify
+#from api import soundcloud, spotify
 
 @Client.on_message(filters.regex("^(https|http)://m.soundcloud.com/.*?") & filters.private)
 async def soundcloud_handler(bot, message):
