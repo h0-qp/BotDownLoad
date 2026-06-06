@@ -1,7 +1,0 @@
-pyrogram
-tgcrypto
-pyromod
-kvsqlite
-cloudscraper
-beautifulsoup4
-yt-dlp
