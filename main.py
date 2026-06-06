@@ -24,7 +24,7 @@ OWNER_ID = 1160471152
 START_TIME = time.time()
 
 app = Client("MyBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-db = KVSQ("bot_data.sqlite")
+db = KVSQ("/app/data/bot_data.sqlite")
 
 if not db.exists("users"): db.set("users", [])
 if not db.exists("banned_users"): db.set("banned_users", [])
@@ -35,7 +35,7 @@ if not db.exists("welcome_message"):
     db.set("welcome_message", default_welcome)
 
 # ------------------------------------------------------------------------
-# تهيئة وتجهيز مكتبة Instaloader مع الـ Session ID الخاص بك
+# تهيئة وتجهيز مكتبة Instaloader مع إعدادات متقدمة للهيدرز
 # ------------------------------------------------------------------------
 il = instaloader.Instaloader(
     download_pictures=False, download_videos=False, 
@@ -43,11 +43,18 @@ il = instaloader.Instaloader(
     download_comments=False, save_metadata=False
 )
 
-# زرع الكوكيز والـ Session ID برمجياً للحساب
+# تحديث الهيدرز لتكون متطابقة بالكامل مع حاسبة نظام ويندوز كروم
+il.context._session.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "*/*",
+    "Connection": "keep-alive"
+})
+
 SESSION_ID = "54331833835%3A7fPWDGnWJnUZCj%3A22%3AAYdgFUZ8fSyRh7xLnXc_7HnrMxPkQmVUEDI5cUoPLA"
 try:
     il.context._session.cookies.set("sessionid", SESSION_ID, domain=".instagram.com")
-    print("🔒 Instagram Engine: Session ID Inject Successfully!", flush=True)
+    print("🔒 Instagram Engine: Session ID Injected Successfully!", flush=True)
 except Exception as e:
     print(f"⚠️ Instagram Engine Login Error: {e}", flush=True)
 
@@ -189,12 +196,10 @@ def download_audio_track(url: str) -> dict:
     return None
 
 # ==========================================
-# 6. [المحرك الجديد 🚀] محرك إنستجرام الاحترافي القائم على Instaloader
+# 6. محرك إنستجرام الاحترافي القائم على Instaloader
 # ==========================================
 def fetch_instagram_post(url: str) -> list:
-    """يستخرج البوستات، الريلز، المنشورات المتعددة بدقة خرافية"""
     try:
-        # استخراج الـ Shortcode من الرابط (سواء p أو reel أو tv)
         match = re.search(r'/(?:p|reel|tv|share/reel)/([A-Za-z0-9_-]+)', url)
         if not match: return []
         shortcode = match.group(1)
@@ -202,13 +207,11 @@ def fetch_instagram_post(url: str) -> list:
         post = instaloader.Post.from_shortcode(il.context, shortcode)
         media_list = []
         
-        # إذا كان البوست عبارة عن ألبوم (صور وفيديوهات متعددة مختلطة)
         if post.typename == 'GraphSidecar':
             for node in post.get_sidecar_nodes():
                 if node.is_video: media_list.append({"type": "video", "url": node.video_url})
                 else: media_list.append({"type": "photo", "url": node.display_url})
         else:
-            # إذا كان منشور مفرد (فيديو أو ريلز أو صورة واحدة)
             if post.is_video: media_list.append({"type": "video", "url": post.video_url})
             else: media_list.append({"type": "photo", "url": post.display_url})
             
@@ -218,7 +221,7 @@ def fetch_instagram_post(url: str) -> list:
     return []
 
 def fetch_instagram_profile(username: str) -> dict:
-    """يجلب معلومات البروفايل الكاملة مع صورة الحساب الشخصية"""
+    """[تم التحديث 🔧] دالة جلب البروفايل مع طباعة تفصيلية للخطأ الحقيقي بالـ Logs"""
     try:
         profile = instaloader.Profile.from_username(il.context, username)
         return {
@@ -229,11 +232,11 @@ def fetch_instagram_profile(username: str) -> dict:
             "id": profile.userid
         }
     except Exception as e:
-        print(f"Instaloader Profile Error: {e}", flush=True)
+        # صمام أمان: يطبع الخطأ الحقيقي القادم من إنستجرام داخل لوحة ريلوي فوراً
+        print(f"🚨 CRITICAL INSTAGRAM PROFILE ERROR: {str(e)}", flush=True)
     return None
 
 def fetch_instagram_stories(username: str) -> list:
-    """يسحب الستوريات الشغالة حالياً للحساب المذكور"""
     try:
         profile = instaloader.Profile.from_username(il.context, username)
         stories_media = []
@@ -266,7 +269,6 @@ async def callback_handler(client, callback):
     data = callback.data
     chat_id = callback.message.chat.id
     
-    # 🚀 معالج زر تحميل الستوريات الخاص بإنستجرام
     if data.startswith("dl_story_"):
         target_username = data.replace("dl_story_", "")
         await callback.answer("⏳ جاري سحب الستوريات بالخفاء...", show_alert=False)
@@ -274,13 +276,12 @@ async def callback_handler(client, callback):
         
         stories = await asyncio.to_thread(fetch_instagram_stories, target_username)
         if not stories:
-            await status_msg.edit("⚠️ لا توجد ستوريات نشطة حالياً لهذا الحساب، أو الحساب خاص ولا تابعه.")
+            await status_msg.edit("⚠️ لا توجد ستوريات نشطة حالياً لهذا الحساب، أو الحساب خاص ولا تتابعه.")
             return
             
         await status_msg.edit(f"📥 جاري إرسال `{len(stories)}` ستوري...")
         caption = build_caption(client, f"ستوري العضو @{target_username}")
         
-        # تقطيع الإرسال كل 10 في ألبوم
         for i in range(0, len(stories), 10):
             chunk = stories[i:i+10]
             media_group = [InputMediaVideo(m["url"], caption=caption if idx==0 else "") if m["type"]=="video" else InputMediaPhoto(m["url"], caption=caption if idx==0 else "") for idx, m in enumerate(chunk)]
@@ -292,7 +293,6 @@ async def callback_handler(client, callback):
         await status_msg.delete()
         return
 
-    # باقي معالجات الآدمن لوحة التحكم
     if callback.from_user.id != OWNER_ID: return
     if data == "admin_stats":
         text = f"📊 **إحصائيات البوت:**\n\n👥 الأعضاء النشطين: `{len(db.get('users'))}`\n🚫 المحظورين: `{len(db.get('banned_users'))}`\n⏳ مدة التشغيل: `{get_uptime()}`"
@@ -330,7 +330,6 @@ async def start_command(client, message):
     welcome_template = db.get("welcome_message")
     await message.reply(welcome_template.replace("{mention}", message.from_user.mention))
 
-# معالج النصوص والروابط
 @app.on_message(filters.private & filters.text)
 async def central_handler(client, message):
     user_id = message.from_user.id
@@ -344,13 +343,9 @@ async def central_handler(client, message):
 
     text_input = message.text.strip()
     
-    # ------------------------------------------------------------------------
-    # فرع أ: إذا كان المدخل "رابط صريح" (نظام التحميل)
-    # ------------------------------------------------------------------------
     if re.match(r"https?://[^\s]+", text_input):
         processing_msg = await message.reply("⏳ **جاري معالجة الرابط والتحميل...**", quote=True)
         try:
-            # 🌟 قسم إنستجرام الجديد القائم على الحساب والـ SessionID
             if "instagram.com" in text_input:
                 await processing_msg.edit("⏳ **جاري سحب منشور إنستجرام عبر الحساب الرسمي...**")
                 media_list = await asyncio.to_thread(fetch_instagram_post, text_input)
@@ -366,7 +361,6 @@ async def central_handler(client, message):
                     await client.send_media_group(message.chat.id, media=media_group, reply_to_message_id=message.id)
                 await processing_msg.delete()
 
-            # باقي أقسام التحميل (تيك توك، تويتر، يوتيوب، بنترست، سبوتيفاي) كما هي بكفاءة
             elif "tiktok.com" in text_input:
                 data = await asyncio.to_thread(extract_tiktok_data, text_input)
                 if data["type"] == "video": await client.send_video(message.chat.id, video=data["video_url"], caption=build_caption(client, data.get('title')), reply_to_message_id=message.id)
@@ -393,21 +387,17 @@ async def central_handler(client, message):
             else: await processing_msg.edit("❌ هذا الرابط غير مدعوم حالياً.")
         except Exception as e: await processing_msg.edit(f"⚠️ خطأ: `{str(e)}`")
 
-    # ------------------------------------------------------------------------
-    # فرع ب: إذا كان المدخل "نص عادي / يوزر نيم" (نظام كشف الحسابات والستوري) 🌟
-    # ------------------------------------------------------------------------
     else:
-        # تنظيف اليوزر إذا كتبه المستخدم مع علامة @
         username = text_input.replace("@", "").strip()
-        if " " in username or len(username) > 30: return # حماية ضد النصوص الطويلة العشوائية
+        if " " in username or len(username) > 30 or "/" in username: return 
         
-        processing_msg = await message.reply("🔍 **جاري البحث عن البروفايل في إنستجرام...**")
+        processing_msg = await message.reply("🔍 **جاري الفحص والبحث عن الحساب...**")
         profile = await asyncio.to_thread(fetch_instagram_profile, username)
         
         if not profile:
-            return await processing_msg.edit("❌ لم يتم العثور على هذا الحساب، تأكد من صحة اليوزر نيم.")
+            # 💡 [تعديل ذكي] إشعار المستخدم مع توجيه الآدمن لفحص لوحة تحكم ريلوي لمعرفة الخطأ بدقة
+            return await processing_msg.edit("❌ فشل العثور على الحساب أو أن الطلب تم رفضه من إنستجرام حالياً.\n💡 يرجى المحاولة لاحقاً.")
             
-        # بناء بطاقة المعلومات الأنيقة
         verified_badge = "☑️ موثق" if profile["is_verified"] else ""
         privacy_status = "🔒 حساب خاص" if profile["is_private"] else "🔓 حساب عام"
         
@@ -422,15 +412,12 @@ async def central_handler(client, message):
             f"📖 **البايو:**\n{profile['bio'] if profile['bio'] else 'لا يوجد بايو.'}"
         )
         
-        # أزرار التحكم بالستوري
         btns = InlineKeyboardMarkup([[InlineKeyboardButton("📥 تحميل الستوريات الحالية", callback_data=f"dl_story_{profile['username']}")]])
         
         try:
-            # إرسال الصورة الشخصية للحساب مع بطاقة المعلومات والأزرار
             await client.send_photo(message.chat.id, photo=profile["pic_url"], caption=profile_card, reply_markup=btns, reply_to_message_id=message.id)
             await processing_msg.delete()
         except Exception:
-            # إذا رفض تيليجرام إرسال الصورة لرابطها، نرسلها كرسالة نصية فقط
             await message.reply(profile_card, reply_markup=btns, quote=True)
             await processing_msg.delete()
 
