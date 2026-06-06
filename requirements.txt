@@ -1,0 +1,16 @@
+pyrogram
+tgcrypto
+yt-dlp
+youtube-search
+redis
+kvsqlite
+python-dotenv
+aiohttp
+aiofiles
+user-agent
+wget
+cloudscraper
+bs4
+flask
+requests
+instaloader
