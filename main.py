@@ -26,7 +26,7 @@ OWNER_ID = 1160471152
 
 START_TIME = time.time()
 app = Client("MyBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-db = KVSQ("/app/data/bot_data.sqlite")
+db = KVSQ("bot_data.sqlite")
 
 if not db.exists("users"): db.set("users", [])
 if not db.exists("banned_users"): db.set("banned_users", [])
