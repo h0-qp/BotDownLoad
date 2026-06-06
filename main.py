@@ -15,6 +15,9 @@ from modules.youtube import download_youtube_video
 from modules.twitter import extract_twitter_data
 from modules.pinterest import extract_pinterest_data
 from modules.audio_track import download_audio_track
+from modules.facebook import download_facebook_video
+from modules.snapchat import download_snapchat_video
+
 
 API_ID = 12588588 
 API_HASH = "f2e0652152a45a25dc70f5bed7907d6e"
@@ -23,7 +26,7 @@ OWNER_ID = 1160471152
 
 START_TIME = time.time()
 app = Client("MyBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-db = KVSQ("bot_data.sqlite")
+db = KVSQ("/app/data/bot_data.sqlite")
 
 if not db.exists("users"): db.set("users", [])
 if not db.exists("banned_users"): db.set("banned_users", [])
@@ -172,6 +175,21 @@ async def central_handler(client, message):
                 try: await client.send_audio(message.chat.id, audio=data['path'], caption=build_caption(client, data['title']), reply_to_message_id=message.id)
                 finally: os.remove(data['path'])
                 await processing_msg.delete()
+            elif "facebook.com" in text_input or "fb.watch" in text_input:
+                await processing_msg.edit("⏳ **جاري سحب فيديو الفيسبوك...**")
+                data = await asyncio.to_thread(download_facebook_video, text_input)
+                if not data: return await processing_msg.edit("❌ فشل تحميل فيديو الفيسبوك.")
+                try: await client.send_video(message.chat.id, video=data['path'], caption=build_caption(client, data['title']), reply_to_message_id=message.id)
+                finally: os.remove(data['path'])
+                await processing_msg.delete()
+
+            elif "snapchat.com" in text_input:
+                await processing_msg.edit("⏳ **جاري سحب مقطع السناب شات...**")
+                data = await asyncio.to_thread(download_snapchat_video, text_input)
+                if not data: return await processing_msg.edit("❌ فشل تحميل مقطع السناب.")
+                try: await client.send_video(message.chat.id, video=data['path'], caption=build_caption(client, data['title']), reply_to_message_id=message.id)
+                finally: os.remove(data['path'])
+                await processing_msg.delete()
         except Exception as e: await processing_msg.edit(f"⚠️ خطأ: `{str(e)}`")
     else:
         username = text_input.replace("@", "").strip()
@@ -190,4 +208,4 @@ async def central_handler(client, message):
 
 if __name__ == "__main__":
     app.run()
-    
+            
